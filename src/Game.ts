@@ -628,6 +628,10 @@ export class Game {
   }
 
   private onMouseDown = (event: MouseEvent): void => {
+    // Touch play uses the on-screen contextual button, not clicks. Taps emit
+    // synthetic mouse events, so without this guard a tap anywhere (even on a
+    // joystick) would possess or move — the very confusion we removed.
+    if (this.touchPlay) return;
     if (!this.controller.isActive) return;
 
     // Right click: retreat to the origin square, abandoning the walk.
