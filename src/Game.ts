@@ -89,8 +89,10 @@ const REMOTE_WALK_TIMEOUT_S = 5;
 
 /** Look yaw is re-sent only after turning this far (rad). */
 const PRESENCE_MIN_YAW_DELTA = 0.03;
-/** Smoothing rate for the friend's face screen orbiting to their yaw. */
-const REMOTE_YAW_SMOOTH_RATE = 10;
+/** Look pitch is re-sent only after tilting this far (rad). */
+const PRESENCE_MIN_PITCH_DELTA = 0.03;
+/** Smoothing rate for the friend's face screen orbiting to their look. */
+const REMOTE_LOOK_SMOOTH_RATE = 10;
 
 /** Shortest-path difference between two angles (rad), in [-π, π]. */
 function angleDelta(a: number, b: number): number {
@@ -186,6 +188,7 @@ export class Game {
     duck: false,
     jumps: 0,
     yaw: 0,
+    pitch: 0,
   };
 
   /** Incoming presence: the friend's piece walking live, dead-reckoned. */
@@ -207,9 +210,11 @@ export class Game {
   private readonly faceScreen = new FaceScreen();
   /** Plays the friend's voice; detached elements play audio just fine. */
   private readonly remoteAudio = document.createElement('audio');
-  /** Friend's look yaw: latest reported and the smoothed display value. */
+  /** Friend's look direction: latest reported and smoothed display values. */
   private remoteYaw: number | null = null;
+  private remotePitch: number | null = null;
   private remoteYawSmoothed: number | null = null;
+  private remotePitchSmoothed: number | null = null;
   private readonly tmpLookDir = new THREE.Vector3();
   private readonly enemyPointer: HTMLElement | null;
   private readonly enemyPointerGlyph: HTMLElement | null;
@@ -715,18 +720,20 @@ export class Game {
 
     const duck = this.localAntics.isDucking;
     const jumps = this.localAntics.jumpCount;
-    const yaw = this.cameraYaw();
+    const { yaw, pitch } = this.cameraLook();
 
     const last = this.lastSentPresence;
     const moved = Math.hypot(x - last.x, z - last.z) > PRESENCE_MIN_DELTA;
     const turned = Math.abs(angleDelta(yaw, last.yaw)) > PRESENCE_MIN_YAW_DELTA;
+    const tilted = Math.abs(pitch - last.pitch) > PRESENCE_MIN_PITCH_DELTA;
     if (
       this.possessedCoord === last.coord &&
       walking === last.walking &&
       (!walking || !moved) &&
       duck === last.duck &&
       jumps === last.jumps &&
-      !turned
+      !turned &&
+      !tilted
     ) {
       return; // nothing the friend doesn't already know
     }
@@ -743,18 +750,23 @@ export class Game {
           duck: duck || undefined,
           jumps: jumps || undefined,
           yaw: Math.round(yaw * 100) / 100,
+          pitch: Math.round(pitch * 100) / 100,
         },
       },
       true,
     );
     this.lastPresenceSentAt = now;
-    this.lastSentPresence = { coord: this.possessedCoord, x, z, walking, duck, jumps, yaw };
+    this.lastSentPresence = { coord: this.possessedCoord, x, z, walking, duck, jumps, yaw, pitch };
   }
 
-  /** Our look direction projected to a yaw angle on the board plane. */
-  private cameraYaw(): number {
+  /** Our look direction as yaw (board plane) and pitch (up/down). */
+  private cameraLook(): { yaw: number; pitch: number } {
     this.camera.getWorldDirection(this.tmpLookDir);
-    return Math.atan2(this.tmpLookDir.x, this.tmpLookDir.z);
+    const horizontal = Math.hypot(this.tmpLookDir.x, this.tmpLookDir.z);
+    return {
+      yaw: Math.atan2(this.tmpLookDir.x, this.tmpLookDir.z),
+      pitch: Math.atan2(this.tmpLookDir.y, horizontal),
+    };
   }
 
   // --- Live presence: playing the friend's movements back ------------------
@@ -781,6 +793,7 @@ export class Game {
     this.remoteAntics.attach(this.chessSet.getPiece(presence.possessed) ?? null);
     this.remoteAntics.setDuck(presence.duck === true);
     if (typeof presence.yaw === 'number') this.remoteYaw = presence.yaw;
+    if (typeof presence.pitch === 'number') this.remotePitch = presence.pitch;
     const jumps = presence.jumps ?? 0;
     if (this.remoteJumpsSeen === null || jumps < this.remoteJumpsSeen) {
       this.remoteJumpsSeen = jumps;
@@ -1060,9 +1073,9 @@ export class Game {
 
   /**
    * Keep the friend's face screen parked in front of their possessed piece,
-   * orbited to their (smoothed) look yaw — when the face points at you, they
-   * are actually looking at you in their game. Shown for every online game:
-   * without video the screen falls back to a cartoon face.
+   * orbited to their (smoothed) look yaw and pitch — when the face points at
+   * you, they are actually looking at you in their game. Shown for every
+   * online game: without video the screen falls back to a cartoon face.
    */
   private updateFaceScreen(delta: number): void {
     if (!this.onlineSession || !this.enemyPossessedCoord) {
@@ -1076,13 +1089,24 @@ export class Game {
       return;
     }
 
-    // Default to facing across the board until the first yaw sample arrives.
-    const target = this.remoteYaw ?? (this.opponentColor === 'white' ? 0 : Math.PI);
-    const current = this.remoteYawSmoothed ?? target;
-    this.remoteYawSmoothed =
-      current + angleDelta(target, current) * Math.min(1, REMOTE_YAW_SMOOTH_RATE * delta);
+    const smooth = Math.min(1, REMOTE_LOOK_SMOOTH_RATE * delta);
 
-    this.faceScreen.updatePose(group.position, PIECE_EYE_HEIGHT[piece.type], this.remoteYawSmoothed);
+    // Default to facing across the board until the first yaw sample arrives.
+    const targetYaw = this.remoteYaw ?? (this.opponentColor === 'white' ? 0 : Math.PI);
+    const currentYaw = this.remoteYawSmoothed ?? targetYaw;
+    this.remoteYawSmoothed = currentYaw + angleDelta(targetYaw, currentYaw) * smooth;
+
+    const targetPitch = this.remotePitch ?? 0;
+    const currentPitch = this.remotePitchSmoothed ?? targetPitch;
+    this.remotePitchSmoothed = currentPitch + (targetPitch - currentPitch) * smooth;
+
+    this.faceScreen.updatePose(
+      group.position,
+      PIECE_EYE_HEIGHT[piece.type],
+      this.remoteAntics.verticalScale,
+      this.remoteYawSmoothed,
+      this.remotePitchSmoothed,
+    );
     this.faceScreen.setVisible(true);
   }
 
@@ -1204,7 +1228,7 @@ export class Game {
 
     if (this.possessedMoves.length > 0) {
       this.hint.textContent = this.touchPlay
-        ? 'Joystick \u2014 walk a legal path \u00b7 rest on a square \u2014 confirm the move'
+        ? 'Left stick \u2014 walk \u00b7 right stick \u2014 look \u00b7 rest on a square \u2014 confirm'
         : this.mode === 'online'
           ? 'WASD \u2014 walk a legal path \u00b7 rest or Enter \u2014 confirm \u00b7 Camera/Mic \u2014 top-right'
           : 'WASD \u2014 walk a legal path \u00b7 rest or Enter \u2014 confirm \u00b7 right-click \u2014 retreat';

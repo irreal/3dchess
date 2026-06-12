@@ -39,6 +39,8 @@ export interface PresencePayload {
   jumps?: number;
   /** Camera look yaw (radians), so the face screen orbits with the gaze. */
   yaw?: number;
+  /** Camera look pitch (radians), so the face screen tilts with the gaze. */
+  pitch?: number;
 }
 
 /**

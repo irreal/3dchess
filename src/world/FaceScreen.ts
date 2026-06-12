@@ -74,8 +74,8 @@ function createPlaceholderTexture(): THREE.CanvasTexture {
 /**
  * The online friend's webcam, projected on a small screen floating in front
  * of the piece they possess. The screen orbits the piece following their
- * streamed look yaw, so when their face is pointing at you, they are
- * actually looking at you in their game. Without a video stream the screen
+ * streamed look yaw and pitch, so when their face is pointing at you, they
+ * are actually looking at you in their game. Without a video stream the screen
  * shows a cartoon face instead, so the friend stays embodied either way.
  */
 export class FaceScreen {
@@ -135,15 +135,25 @@ export class FaceScreen {
 
   /**
    * Park the screen in front of the piece, orbited to the given yaw and
-   * facing the same way, riding the piece's jumps via its live position.
+   * pitch and facing the same way, riding jumps and crouches via the piece's
+   * live position and eye scale.
    */
-  updatePose(piecePosition: THREE.Vector3, eyeHeight: number, yaw: number): void {
+  updatePose(
+    piecePosition: THREE.Vector3,
+    eyeHeight: number,
+    eyeScale: number,
+    yaw: number,
+    pitch: number,
+  ): void {
+    const orbit = Math.cos(pitch) * FORWARD_OFFSET;
     this.object.position.set(
-      piecePosition.x + Math.sin(yaw) * FORWARD_OFFSET,
-      piecePosition.y + eyeHeight + LIFT,
-      piecePosition.z + Math.cos(yaw) * FORWARD_OFFSET,
+      piecePosition.x + Math.sin(yaw) * orbit,
+      piecePosition.y + eyeHeight * eyeScale + LIFT + Math.sin(pitch) * FORWARD_OFFSET,
+      piecePosition.z + Math.cos(yaw) * orbit,
     );
+    this.object.rotation.order = 'YXZ';
     this.object.rotation.y = yaw;
+    this.object.rotation.x = pitch;
   }
 
   setVisible(visible: boolean): void {

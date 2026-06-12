@@ -1,34 +1,38 @@
 import type { PossessionController } from './PossessionController';
 
 const JOYSTICK_RADIUS = 52;
-const LOOK_SENSITIVITY = 0.0028;
-/** Movement below this (px) counts as a tap rather than a drag. */
+/** Movement below this (px) on open screen counts as a tap-to-possess. */
 const TAP_SLOP_PX = 14;
 
+interface JoystickSlot {
+  pointerId: number | null;
+  origin: { x: number; y: number };
+  base: HTMLElement;
+  stick: HTMLElement;
+  setInput: (x: number, y: number) => void;
+}
+
 /**
- * On-screen joystick, look pad, jump/duck buttons and pause for touch play.
- * Pointer lock is unreliable on mobile, so the controller runs in touch-engaged
- * mode instead.
+ * Twin joysticks (move + look), action buttons and a tap-anywhere layer for
+ * touch play. Pointer lock is unreliable on mobile, so the controller runs in
+ * touch-engaged mode instead.
  */
 export class TouchControls {
   private readonly root: HTMLElement;
   private readonly tapZone: HTMLElement;
-  private readonly lookPad: HTMLElement;
-  private readonly stick: HTMLElement;
+  private readonly moveJoy: JoystickSlot;
+  private readonly lookJoy: JoystickSlot;
   private readonly jumpBtn: HTMLButtonElement;
   private readonly duckBtn: HTMLButtonElement;
   private readonly pauseBtn: HTMLButtonElement;
 
-  private joystickPointerId: number | null = null;
-  private joystickOrigin = { x: 0, y: 0 };
-  private lookPointerId: number | null = null;
-  private lookLast = { x: 0, y: 0 };
-  private lookMoved = false;
   private tapPointerId: number | null = null;
   private tapLast = { x: 0, y: 0 };
   private tapMoved = false;
+  private readonly onMoveJoyDown: (event: PointerEvent) => void;
+  private readonly onLookJoyDown: (event: PointerEvent) => void;
 
-  /** Fired on a short tap on the board view (possess a piece under the crosshair). */
+  /** Fired on a short tap on open screen (possess a piece under the crosshair). */
   onTap: (() => void) | null = null;
 
   /** Fired when the player hits pause. */
@@ -40,17 +44,36 @@ export class TouchControls {
   ) {
     this.root = root;
     this.tapZone = root.querySelector('#tap-zone') as HTMLElement;
-    this.lookPad = root.querySelector('#look-pad') as HTMLElement;
-    this.stick = root.querySelector('#joystick-stick') as HTMLElement;
+
+    const moveBase = root.querySelector('#move-joystick .joystick-base') as HTMLElement;
+    const moveStick = root.querySelector('#move-joystick .joystick-stick') as HTMLElement;
+    const lookBase = root.querySelector('#look-joystick .joystick-base') as HTMLElement;
+    const lookStick = root.querySelector('#look-joystick .joystick-stick') as HTMLElement;
+
+    this.moveJoy = {
+      pointerId: null,
+      origin: { x: 0, y: 0 },
+      base: moveBase,
+      stick: moveStick,
+      setInput: (x, y) => this.controller.setStickInput(x, y),
+    };
+    this.lookJoy = {
+      pointerId: null,
+      origin: { x: 0, y: 0 },
+      base: lookBase,
+      stick: lookStick,
+      setInput: (x, y) => this.controller.setLookInput(x, y),
+    };
+
     this.jumpBtn = root.querySelector('#touch-jump') as HTMLButtonElement;
     this.duckBtn = root.querySelector('#touch-duck') as HTMLButtonElement;
     this.pauseBtn = root.querySelector('#touch-pause') as HTMLButtonElement;
 
-    const joystickBase = root.querySelector('#joystick-base') as HTMLElement;
-
-    joystickBase.addEventListener('pointerdown', this.onJoystickDown);
+    this.onMoveJoyDown = (event) => this.onJoystickDown(event, this.moveJoy);
+    this.onLookJoyDown = (event) => this.onJoystickDown(event, this.lookJoy);
+    moveBase.addEventListener('pointerdown', this.onMoveJoyDown);
+    lookBase.addEventListener('pointerdown', this.onLookJoyDown);
     this.tapZone.addEventListener('pointerdown', this.onTapDown);
-    this.lookPad.addEventListener('pointerdown', this.onLookDown);
     this.jumpBtn.addEventListener('pointerdown', this.onJump);
     this.duckBtn.addEventListener('pointerdown', this.onDuckDown);
     this.duckBtn.addEventListener('pointerup', this.onDuckUp);
@@ -69,16 +92,15 @@ export class TouchControls {
 
   hide(): void {
     this.root.classList.add('hidden');
-    this.resetJoystick();
+    this.resetJoystick(this.moveJoy);
+    this.resetJoystick(this.lookJoy);
     this.controller.setTouchDuck(false);
-    this.lookPad.classList.remove('dragging');
   }
 
   dispose(): void {
-    const joystickBase = this.root.querySelector('#joystick-base') as HTMLElement;
-    joystickBase.removeEventListener('pointerdown', this.onJoystickDown);
+    this.moveJoy.base.removeEventListener('pointerdown', this.onMoveJoyDown);
+    this.lookJoy.base.removeEventListener('pointerdown', this.onLookJoyDown);
     this.tapZone.removeEventListener('pointerdown', this.onTapDown);
-    this.lookPad.removeEventListener('pointerdown', this.onLookDown);
     this.jumpBtn.removeEventListener('pointerdown', this.onJump);
     this.duckBtn.removeEventListener('pointerdown', this.onDuckDown);
     this.duckBtn.removeEventListener('pointerup', this.onDuckUp);
@@ -90,14 +112,14 @@ export class TouchControls {
     window.removeEventListener('blur', this.onWindowBlur);
   }
 
-  private onJoystickDown = (event: PointerEvent): void => {
+  private onJoystickDown(event: PointerEvent, slot: JoystickSlot): void {
     if (!this.controller.isActive) return;
     event.preventDefault();
-    this.joystickPointerId = event.pointerId;
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    this.joystickOrigin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    this.updateJoystick(event.clientX, event.clientY);
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    slot.pointerId = event.pointerId;
+    const rect = slot.base.getBoundingClientRect();
+    slot.origin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    this.updateJoystick(event.clientX, event.clientY, slot);
+    slot.base.setPointerCapture(event.pointerId);
   };
 
   private onTapDown = (event: PointerEvent): void => {
@@ -107,16 +129,6 @@ export class TouchControls {
     this.tapLast = { x: event.clientX, y: event.clientY };
     this.tapMoved = false;
     this.tapZone.setPointerCapture(event.pointerId);
-  };
-
-  private onLookDown = (event: PointerEvent): void => {
-    if (!this.controller.isActive) return;
-    event.preventDefault();
-    this.lookPointerId = event.pointerId;
-    this.lookLast = { x: event.clientX, y: event.clientY };
-    this.lookMoved = false;
-    this.lookPad.classList.add('dragging');
-    this.lookPad.setPointerCapture(event.pointerId);
   };
 
   private onJump = (event: PointerEvent): void => {
@@ -142,9 +154,14 @@ export class TouchControls {
   };
 
   private onPointerMove = (event: PointerEvent): void => {
-    if (event.pointerId === this.joystickPointerId) {
+    if (event.pointerId === this.moveJoy.pointerId) {
       event.preventDefault();
-      this.updateJoystick(event.clientX, event.clientY);
+      this.updateJoystick(event.clientX, event.clientY, this.moveJoy);
+      return;
+    }
+    if (event.pointerId === this.lookJoy.pointerId) {
+      event.preventDefault();
+      this.updateJoystick(event.clientX, event.clientY, this.lookJoy);
       return;
     }
     if (event.pointerId === this.tapPointerId) {
@@ -154,62 +171,46 @@ export class TouchControls {
       if (Math.abs(dx) > TAP_SLOP_PX || Math.abs(dy) > TAP_SLOP_PX) {
         this.tapMoved = true;
       }
-      return;
-    }
-    if (event.pointerId === this.lookPointerId) {
-      event.preventDefault();
-      const dx = event.clientX - this.lookLast.x;
-      const dy = event.clientY - this.lookLast.y;
-      if (Math.abs(dx) > TAP_SLOP_PX || Math.abs(dy) > TAP_SLOP_PX) {
-        this.lookMoved = true;
-      }
-      this.lookLast = { x: event.clientX, y: event.clientY };
-      if (this.lookMoved) {
-        this.controller.rotateLook(dx * LOOK_SENSITIVITY, dy * LOOK_SENSITIVITY);
-      }
     }
   };
 
   private onPointerUp = (event: PointerEvent): void => {
-    if (event.pointerId === this.joystickPointerId) {
-      this.resetJoystick();
+    if (event.pointerId === this.moveJoy.pointerId) {
+      this.resetJoystick(this.moveJoy);
+      return;
+    }
+    if (event.pointerId === this.lookJoy.pointerId) {
+      this.resetJoystick(this.lookJoy);
       return;
     }
     if (event.pointerId === this.tapPointerId) {
       if (!this.tapMoved) this.onTap?.();
       this.tapPointerId = null;
       this.tapMoved = false;
-      return;
-    }
-    if (event.pointerId === this.lookPointerId) {
-      this.lookPad.classList.remove('dragging');
-      this.lookPointerId = null;
-      this.lookMoved = false;
     }
   };
 
   private onWindowBlur = (): void => {
-    this.resetJoystick();
+    this.resetJoystick(this.moveJoy);
+    this.resetJoystick(this.lookJoy);
     this.controller.setTouchDuck(false);
-    this.lookPointerId = null;
     this.tapPointerId = null;
-    this.lookPad.classList.remove('dragging');
   };
 
-  private updateJoystick(clientX: number, clientY: number): void {
-    const dx = clientX - this.joystickOrigin.x;
-    const dy = clientY - this.joystickOrigin.y;
+  private updateJoystick(clientX: number, clientY: number, slot: JoystickSlot): void {
+    const dx = clientX - slot.origin.x;
+    const dy = clientY - slot.origin.y;
     const dist = Math.hypot(dx, dy);
     const clamped = dist > JOYSTICK_RADIUS ? JOYSTICK_RADIUS / dist : 1;
     const x = dx * clamped;
     const y = dy * clamped;
-    this.stick.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-    this.controller.setStickInput(x / JOYSTICK_RADIUS, -y / JOYSTICK_RADIUS);
+    slot.stick.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+    slot.setInput(x / JOYSTICK_RADIUS, -y / JOYSTICK_RADIUS);
   }
 
-  private resetJoystick(): void {
-    this.joystickPointerId = null;
-    this.stick.style.transform = 'translate(0px, 0px)';
-    this.controller.setStickInput(0, 0);
+  private resetJoystick(slot: JoystickSlot): void {
+    slot.pointerId = null;
+    slot.stick.style.transform = 'translate(0px, 0px)';
+    slot.setInput(0, 0);
   }
 }

@@ -12,12 +12,13 @@ const MAX_COORD = 50;
  */
 export function sanitizePresence(raw: unknown): PresencePayload | null {
   if (typeof raw !== 'object' || raw === null) return null;
-  const { possessed, pos, duck, jumps, yaw } = raw as {
+  const { possessed, pos, duck, jumps, yaw, pitch } = raw as {
     possessed?: unknown;
     pos?: unknown;
     duck?: unknown;
     jumps?: unknown;
     yaw?: unknown;
+    pitch?: unknown;
   };
 
   if (typeof possessed !== 'string' || !SQUARE_RE.test(possessed)) return null;
@@ -32,11 +33,19 @@ export function sanitizePresence(raw: unknown): PresencePayload | null {
   if (yaw !== undefined && (typeof yaw !== 'number' || !Number.isFinite(yaw) || Math.abs(yaw) > 7)) {
     return null;
   }
+  // Pitch is radians; clamp to a sane look range.
+  if (
+    pitch !== undefined &&
+    (typeof pitch !== 'number' || !Number.isFinite(pitch) || Math.abs(pitch) > 2)
+  ) {
+    return null;
+  }
 
   const clean: PresencePayload = { possessed };
   if (duck === true) clean.duck = true;
   if (typeof jumps === 'number' && jumps > 0) clean.jumps = jumps;
   if (typeof yaw === 'number') clean.yaw = yaw;
+  if (typeof pitch === 'number') clean.pitch = pitch;
 
   if (pos === undefined || pos === null) return clean;
 

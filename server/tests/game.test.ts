@@ -187,7 +187,7 @@ function fullRoom(): { room: GameRoom; white: string; black: string } {
   assertEqual(sanitizePresence({ possessed: 'e4', jumps: -1 }), null, 'negative jumps rejected');
   assertEqual(sanitizePresence({ possessed: 'e4', jumps: 1e12 }), null, 'absurd jumps rejected');
 
-  // Look yaw for the face screen.
+  // Look yaw/pitch for the face screen.
   assertEqual(
     JSON.stringify(sanitizePresence({ possessed: 'e4', yaw: -1.57 })),
     '{"possessed":"e4","yaw":-1.57}',
@@ -196,6 +196,14 @@ function fullRoom(): { room: GameRoom; white: string; black: string } {
   assertEqual(sanitizePresence({ possessed: 'e4', yaw: 9 }), null, 'out-of-range yaw rejected');
   assertEqual(sanitizePresence({ possessed: 'e4', yaw: NaN }), null, 'NaN yaw rejected');
   assertEqual(sanitizePresence({ possessed: 'e4', yaw: '1' }), null, 'non-numeric yaw rejected');
+  assertEqual(
+    JSON.stringify(sanitizePresence({ possessed: 'e4', pitch: 0.42 })),
+    '{"possessed":"e4","pitch":0.42}',
+    'pitch passes through',
+  );
+  assertEqual(sanitizePresence({ possessed: 'e4', pitch: 3 }), null, 'out-of-range pitch rejected');
+  assertEqual(sanitizePresence({ possessed: 'e4', pitch: NaN }), null, 'NaN pitch rejected');
+  assertEqual(sanitizePresence({ possessed: 'e4', pitch: '1' }), null, 'non-numeric pitch rejected');
 }
 
 // --- Expiry sweep ---

@@ -54,7 +54,12 @@ export class PossessionController {
   private touchEngaged = false;
   private stickX = 0;
   private stickY = 0;
+  private lookX = 0;
+  private lookY = 0;
   private touchDuck = false;
+
+  /** rad/s at full right-stick deflection */
+  private static readonly LOOK_TURN_RATE = 2.4;
 
   private possessed: PossessTarget | null = null;
   private transition: Transition | null = null;
@@ -145,6 +150,8 @@ export class PossessionController {
     this.touchEngaged = false;
     this.stickX = 0;
     this.stickY = 0;
+    this.lookX = 0;
+    this.lookY = 0;
     this.touchDuck = false;
     this.controls.dispatchEvent({ type: 'unlock' });
   }
@@ -152,6 +159,11 @@ export class PossessionController {
   setStickInput(x: number, y: number): void {
     this.stickX = x;
     this.stickY = y;
+  }
+
+  setLookInput(x: number, y: number): void {
+    this.lookX = x;
+    this.lookY = y;
   }
 
   setTouchDuck(ducking: boolean): void {
@@ -254,6 +266,12 @@ export class PossessionController {
     );
 
     if (this.isActive) {
+      if (this.lookX !== 0 || this.lookY !== 0) {
+        this.rotateLook(
+          this.lookX * PossessionController.LOOK_TURN_RATE * delta,
+          this.lookY * PossessionController.LOOK_TURN_RATE * delta,
+        );
+      }
       this.updateTraversal(delta);
     } else {
       this.dwell = 0;
@@ -478,6 +496,8 @@ export class PossessionController {
     this.keys.clear();
     this.stickX = 0;
     this.stickY = 0;
+    this.lookX = 0;
+    this.lookY = 0;
     this.touchDuck = false;
   };
 }
