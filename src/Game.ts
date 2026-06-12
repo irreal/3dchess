@@ -34,6 +34,7 @@ import {
 } from './net/protocol';
 import { Chessboard } from './world/Chessboard';
 import { ChessSet } from './world/ChessSet';
+import { LastMoveArrow } from './world/LastMoveArrow';
 import { MoveHighlights } from './world/MoveHighlights';
 import { PieceAntics } from './world/PieceAntics';
 import { PossessionMarker } from './world/PossessionMarker';
@@ -183,6 +184,9 @@ export class Game {
   private enemyPossessedCoord: string | null = null;
   private readonly enemyMarker = new PossessionMarker();
 
+  /** Board arrow showing the opponent's most recent move. */
+  private readonly lastMoveArrow = new LastMoveArrow();
+
   /** Outgoing presence stream state (online play). */
   private lastPresenceSentAt = 0;
   private lastSentPresence = {
@@ -285,6 +289,8 @@ export class Game {
     this.moveHighlights = new MoveHighlights();
     this.scene.add(this.moveHighlights.object);
 
+    this.scene.add(this.lastMoveArrow.object);
+
     this.scene.add(this.enemyMarker.object);
     this.scene.add(this.faceScreen.object);
 
@@ -329,6 +335,7 @@ export class Game {
     this.mode = mode;
     this.playerColor = mode === 'free' ? 'white' : playerColor;
     this.inGame = true;
+    this.lastMoveArrow.hide();
     if (mode === 'online') markOnlineInGame(true);
 
     // Looked up (not hardcoded) because an online game may resume mid-way.
@@ -694,6 +701,7 @@ export class Game {
     // The marker rides along as the piece walks to its destination square.
     if (move.color === this.opponentColor) {
       this.enemyPossessedCoord = squareCoord(move.to.file, move.to.rank);
+      this.lastMoveArrow.show(move.from, move.to);
     }
   }
 
@@ -1660,12 +1668,56 @@ export class Game {
       });
     });
 
-    // Resume an online session after reload: stored session wins over the URL
-    // param so a stale ?join= link cannot steal the wrong seat.
-    const stored = getStoredOnlineSession();
+    document.getElementById('online-back')?.addEventListener('click', () => this.exitLobby());
+
+    document.getElementById('resume-online')?.addEventListener('click', () => {
+      const stored = getStoredOnlineSession();
+      if (!stored) return;
+      document.getElementById('resume-online')?.classList.add('hidden');
+      void this.openOnlineLobby(stored.code);
+    });
+
+    // Boot routing for online sessions. A ?join= code in the URL (kept there
+    // for the whole online game) means a reload or invite link: go straight
+    // back to the lobby, or onto the board if this tab was mid-game. The bare
+    // root URL is a deliberate exit — stay on the menu and merely offer a
+    // resume button when a stored seat exists.
     const joinCode = new URLSearchParams(window.location.search).get('join');
-    const resumeCode = stored?.code ?? joinCode;
-    if (resumeCode) void this.openOnlineLobby(resumeCode, wasOnlineInGame());
+    if (joinCode) {
+      void this.openOnlineLobby(joinCode, wasOnlineInGame());
+    } else {
+      markOnlineInGame(false);
+      this.offerResume();
+    }
+  }
+
+  /** Show the menu's "resume online game" button when a seat is stored. */
+  private offerResume(): void {
+    const stored = getStoredOnlineSession();
+    const button = document.getElementById('resume-online');
+    if (!stored || !button) return;
+    button.textContent = `Resume online game ${stored.code}`;
+    button.classList.remove('hidden');
+  }
+
+  /**
+   * Back out of the online lobby to the mode list without burning the seat:
+   * the session stays stored, so the menu offers to resume it.
+   */
+  private exitLobby(): void {
+    this.online?.close();
+    this.online = null;
+    this.onlineSession = null;
+    if (this.videoCall) this.resetVideoCall(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('join');
+    history.replaceState(null, '', url);
+    document.getElementById('online-panel')?.classList.add('hidden');
+    document.getElementById('invite-row')?.classList.add('hidden');
+    document.getElementById('online-start')?.classList.add('hidden');
+    document.querySelector('#menu .modes')?.classList.remove('hidden');
+    this.updateMediaUi();
+    this.offerResume();
   }
 
   /**
@@ -1678,6 +1730,7 @@ export class Game {
     const menu = document.getElementById('menu');
     const onlinePanel = document.getElementById('online-panel');
 
+    document.getElementById('resume-online')?.classList.add('hidden');
     if (!resumeInGame) {
       document.querySelector('#menu .modes')?.classList.add('hidden');
       onlinePanel?.classList.remove('hidden');

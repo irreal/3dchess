@@ -4,11 +4,25 @@ import type { ClientMessage, ServerMessage } from './protocol';
 const SERVER_URL: string = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:8080';
 
 /**
- * Per-tab session storage so a reload rejoins the same seat, while a second
- * tab joining the same code becomes the other player (handy for testing).
+ * The seat token lives in localStorage so every way back into the game — a
+ * plain reload, a mobile tab the browser discarded, the invite link opened
+ * in a fresh tab — reclaims the same seat instead of hitting "Game is full".
+ * (To test both seats from one machine, use an incognito/second profile
+ * window for the other player.) The in-game flag stays per-tab: it only
+ * decides whether a reload of *this tab* warps straight back onto the board.
  */
 const SESSION_KEY = '3dchess-online-session';
 const IN_GAME_KEY = '3dchess-online-in-game';
+
+/** HTTP failure from the game server, carrying the status code for triage. */
+export class ServerError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 export interface OnlineSession {
   code: string;
@@ -64,7 +78,7 @@ export function markOnlineInGame(inGame: boolean): void {
   else sessionStorage.removeItem(IN_GAME_KEY);
 }
 
-/** Keep the invite code in the URL so a reload can find the game. Token stays in sessionStorage. */
+/** Keep the invite code in the URL so a reload can find the game. Token stays in localStorage. */
 export function syncGameUrl(code: string): void {
   const url = new URL(window.location.href);
   url.searchParams.set('join', code);
@@ -72,7 +86,8 @@ export function syncGameUrl(code: string): void {
 }
 
 export function clearStoredOnlineSession(): void {
-  sessionStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(SESSION_KEY); // pre-localStorage sessions
   sessionStorage.removeItem(IN_GAME_KEY);
 }
 
@@ -82,8 +97,19 @@ export async function joinOnlineGame(code: string): Promise<OnlineSession> {
   if (stored && stored.code === normalized) {
     try {
       return await resumeOnlineGame(stored);
-    } catch {
-      clearStoredOnlineSession();
+    } catch (error) {
+      // Only a definitive verdict from the server burns the stored seat:
+      // 401 means someone else holds it now (fall through to claim the
+      // other seat), 404 means the game itself is gone. Anything else —
+      // network blip, server restart or cold start — keeps the token so a
+      // retry can still reclaim the seat; falling through to a plain join
+      // here is what used to surface a bogus "Game is full".
+      if (error instanceof ServerError && error.status === 401) {
+        clearStoredOnlineSession();
+      } else {
+        if (error instanceof ServerError && error.status === 404) clearStoredOnlineSession();
+        throw error;
+      }
     }
   }
   const session = await post(`/api/games/${encodeURIComponent(normalized)}/join`);
@@ -102,31 +128,28 @@ export async function resumeOnlineGame(session: OnlineSession): Promise<OnlineSe
 }
 
 async function post(path: string): Promise<OnlineSession> {
-  let response: Response;
-  try {
-    response = await fetch(`${SERVER_URL}${path}`, { method: 'POST' });
-  } catch {
-    throw new Error('Could not reach the game server');
-  }
-  const body = (await response.json().catch(() => null)) as
-    | (OnlineSession & { error?: string })
-    | null;
-  if (!response.ok || !body) {
-    throw new Error(body?.error ?? `Server error (${response.status})`);
-  }
-  return { code: body.code, token: body.token, color: body.color };
+  return request(path, undefined);
 }
 
 async function postWithBody(
   path: string,
   payload: Record<string, unknown>,
 ): Promise<OnlineSession> {
+  return request(path, payload);
+}
+
+async function request(
+  path: string,
+  payload: Record<string, unknown> | undefined,
+): Promise<OnlineSession> {
   let response: Response;
   try {
     response = await fetch(`${SERVER_URL}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
+      ...(payload !== undefined && {
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      }),
     });
   } catch {
     throw new Error('Could not reach the game server');
@@ -135,18 +158,18 @@ async function postWithBody(
     | (OnlineSession & { error?: string })
     | null;
   if (!response.ok || !body) {
-    throw new Error(body?.error ?? `Server error (${response.status})`);
+    throw new ServerError(body?.error ?? `Server error (${response.status})`, response.status);
   }
   return { code: body.code, token: body.token, color: body.color };
 }
 
 function saveSession(session: OnlineSession): void {
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }
 
 function loadSession(): OnlineSession | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    const raw = localStorage.getItem(SESSION_KEY) ?? sessionStorage.getItem(SESSION_KEY);
     return raw ? (JSON.parse(raw) as OnlineSession) : null;
   } catch {
     return null;
@@ -191,10 +214,17 @@ export class OnlineClient {
       }
     });
 
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (event) => {
       if (this.socket !== socket) return; // superseded by a newer connection
       this.socket = null;
       this.onConnection?.(false);
+      // Server-initiated closes are final: 4000 means this seat connected
+      // from another tab (reconnecting would make the two tabs steal the
+      // socket from each other forever), 4001 means the game expired.
+      if (event.code === 4000 || event.code === 4001) {
+        this.closed = true;
+        return;
+      }
       if (!this.closed) {
         window.setTimeout(() => {
           if (!this.closed) this.connect();

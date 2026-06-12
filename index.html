@@ -120,6 +120,7 @@
       #online-panel.hidden,
       #invite-row.hidden,
       #online-start.hidden,
+      #resume-online.hidden,
       #self-view.hidden {
         display: none;
       }
@@ -169,6 +170,8 @@
       #mic-toggle,
       #av-restart,
       #leave-game,
+      #online-back,
+      #resume-online,
       #online-start {
         padding: 10px 18px;
         border: 1px solid rgba(255, 255, 255, 0.25);
@@ -189,9 +192,21 @@
       #mic-toggle:hover,
       #av-restart:hover,
       #leave-game:hover,
+      #online-back:hover,
+      #resume-online:hover,
       #online-start:hover {
         background: rgba(255, 255, 255, 0.18);
         border-color: rgba(255, 255, 255, 0.55);
+      }
+
+      #resume-online {
+        background: rgba(85, 255, 153, 0.14);
+        border-color: rgba(85, 255, 153, 0.45);
+      }
+
+      #resume-online:hover {
+        background: rgba(85, 255, 153, 0.26);
+        border-color: rgba(85, 255, 153, 0.8);
       }
 
       #leave-game {
@@ -675,6 +690,8 @@
         #mic-toggle,
         #av-restart,
         #leave-game,
+        #online-back,
+        #resume-online,
         #online-start {
           font-size: 14px;
           padding: 10px 14px;
@@ -832,6 +849,7 @@
         <button id="mode-cpu-black">Play as Black<small>CPU plays White</small></button>
         <button id="mode-online">Play Online<small>invite a friend</small></button>
       </div>
+      <button id="resume-online" class="hidden">Resume online game</button>
       <div id="online-panel" class="hidden">
         <p id="online-status">Creating game&hellip;</p>
         <div id="invite-row" class="hidden">
@@ -843,6 +861,7 @@
           <button id="mic-toggle">Enable mic</button>
         </div>
         <button id="online-start" class="hidden">Enter the game</button>
+        <button id="online-back">Back to menu</button>
       </div>
       <p class="controls-help">
         Mouse — look &nbsp;·&nbsp; Click a friendly piece — jump into it<br />
