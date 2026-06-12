@@ -109,14 +109,25 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    const gameRoute = url.pathname.match(/^\/api\/games\/([A-Za-z0-9]+)(\/join)?$/);
+    const gameRoute = url.pathname.match(/^\/api\/games\/([A-Za-z0-9]+)(\/join|\/resume)?$/);
     if (gameRoute) {
       const room = manager.get(gameRoute[1]!);
       if (!room) {
         json(res, 404, { error: 'Game not found' });
         return;
       }
-      if (req.method === 'POST' && gameRoute[2]) {
+      if (req.method === 'POST' && gameRoute[2] === '/resume') {
+        const body = await readJsonBody(req);
+        const token = String((body as { token?: string } | null)?.token ?? '');
+        const color = room.colorOf(token);
+        if (!color) {
+          json(res, 401, { error: 'Invalid or expired session' });
+          return;
+        }
+        json(res, 200, { code: room.code, token, color });
+        return;
+      }
+      if (req.method === 'POST' && gameRoute[2] === '/join') {
         const { token, color } = room.join();
         json(res, 200, { code: room.code, token, color });
         return;

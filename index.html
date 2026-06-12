@@ -400,14 +400,108 @@
         display: none;
       }
 
-      #look-zone {
+      /* Tap the board view (not the look pad) to jump into a piece. */
+      #tap-zone {
         position: absolute;
         top: 0;
-        right: 0;
+        left: 0;
         bottom: 0;
-        left: 38%;
+        right: calc(clamp(120px, 32vw, 180px) + 28px);
         pointer-events: auto;
         touch-action: none;
+      }
+
+      /* Visible drag surface for camera look on touch screens. */
+      #look-pad {
+        position: absolute;
+        top: max(68px, calc(52px + env(safe-area-inset-top)));
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(188px, calc(168px + env(safe-area-inset-bottom)));
+        width: clamp(120px, 32vw, 180px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border-radius: 18px;
+        border: 2px dashed rgba(255, 255, 255, 0.38);
+        background: rgba(20, 24, 28, 0.38);
+        color: rgba(255, 255, 255, 0.82);
+        pointer-events: auto;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      #look-pad .look-pad-label {
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      #look-pad .look-pad-hint {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.58);
+        text-align: center;
+        line-height: 1.35;
+        padding: 0 10px;
+      }
+
+      #look-pad .look-pad-icon {
+        font-size: 28px;
+        line-height: 1;
+        opacity: 0.55;
+      }
+
+      #look-pad.dragging {
+        border-style: solid;
+        border-color: rgba(85, 255, 153, 0.55);
+        background: rgba(85, 255, 153, 0.1);
+      }
+
+      /* In-game camera / mic toggles (online play). */
+      #av-bar {
+        position: fixed;
+        top: max(16px, env(safe-area-inset-top));
+        right: max(16px, env(safe-area-inset-right));
+        display: flex;
+        gap: 8px;
+        z-index: 6;
+        pointer-events: auto;
+      }
+
+      #av-bar.hidden {
+        display: none;
+      }
+
+      #game-camera-toggle,
+      #game-mic-toggle {
+        padding: 8px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        border-radius: 999px;
+        background: rgba(20, 24, 28, 0.72);
+        color: #fff;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+
+      #game-camera-toggle:hover,
+      #game-mic-toggle:hover {
+        background: rgba(255, 255, 255, 0.16);
+        border-color: rgba(255, 255, 255, 0.5);
+      }
+
+      #game-camera-toggle.on,
+      #game-mic-toggle.on {
+        background: rgba(85, 255, 153, 0.18);
+        border-color: rgba(85, 255, 153, 0.55);
       }
 
       #joystick {
@@ -579,11 +673,28 @@
           font-size: 15px;
         }
 
+        #av-bar {
+          top: max(12px, env(safe-area-inset-top));
+          left: max(12px, env(safe-area-inset-left));
+          right: auto;
+        }
+
+        #game-camera-toggle,
+        #game-mic-toggle {
+          font-size: 12px;
+          padding: 7px 12px;
+        }
+
         #self-view {
           right: max(12px, env(safe-area-inset-right));
-          top: max(56px, calc(12px + env(safe-area-inset-top)));
+          top: max(52px, calc(12px + env(safe-area-inset-top)));
           bottom: auto;
-          width: 110px;
+          width: 96px;
+        }
+
+        #look-pad {
+          top: max(108px, calc(88px + env(safe-area-inset-top)));
+          bottom: max(168px, calc(148px + env(safe-area-inset-bottom)));
         }
 
         #hint {
@@ -630,6 +741,10 @@
   </head>
   <body>
     <div id="app"></div>
+    <div id="av-bar" class="hidden">
+      <button id="game-camera-toggle" type="button">Camera</button>
+      <button id="game-mic-toggle" type="button">Mic</button>
+    </div>
     <div id="hud">White to move</div>
     <div id="crosshair"></div>
     <div id="dwell-ring"></div>
@@ -672,18 +787,23 @@
         move<br />
         Right-click — retreat to your square &nbsp;·&nbsp; Esc — release cursor<br />
         Space — jump &nbsp;·&nbsp; Ctrl — duck (just for fun; your friend sees it live)<br />
-        V — toggle camera (online): your face floats by your piece, turning where you look<br />
-        M — toggle microphone (online): talk to your friend while you play
+        Camera / Mic buttons (top-right) — toggle video and voice during online play<br />
+        V / M — same toggles from the keyboard
       </p>
       <p class="controls-help-mobile">
-        Drag the right side — look around &nbsp;·&nbsp; Tap a friendly piece — jump into it<br />
+        Look pad (right) — drag to turn &nbsp;·&nbsp; Tap the board — jump into a piece<br />
         Joystick — walk a legal path &nbsp;·&nbsp; Rest on a square — confirm the move<br />
         Jump / Duck — just for fun; your friend sees it live in online play<br />
-        Enable camera &amp; mic above before entering an online game
+        Camera / Mic buttons (top-left) — toggle video and voice in online play
       </p>
     </div>
     <div id="touch-controls" class="hidden">
-      <div id="look-zone" aria-hidden="true"></div>
+      <div id="tap-zone" aria-hidden="true"></div>
+      <div id="look-pad" aria-label="Drag to look around">
+        <span class="look-pad-icon" aria-hidden="true">&#x2922;</span>
+        <span class="look-pad-label">Look</span>
+        <span class="look-pad-hint">drag here to turn</span>
+      </div>
       <div id="joystick">
         <div id="joystick-base">
           <div id="joystick-stick"></div>

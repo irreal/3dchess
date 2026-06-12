@@ -15,8 +15,12 @@ import { buildCorridors } from './controls/corridors';
 import {
   createOnlineGame,
   fetchIceServers,
+  getStoredOnlineSession,
   joinOnlineGame,
+  markOnlineInGame,
   OnlineClient,
+  syncGameUrl,
+  wasOnlineInGame,
   type OnlineSession,
 } from './net/OnlineClient';
 import { VideoCall } from './net/VideoCall';
@@ -305,6 +309,7 @@ export class Game {
     this.mode = mode;
     this.playerColor = mode === 'free' ? 'white' : playerColor;
     this.inGame = true;
+    if (mode === 'online') markOnlineInGame(true);
 
     // Looked up (not hardcoded) because an online game may resume mid-way.
     const king = this.engine.kingSquare(this.playerColor);
@@ -337,6 +342,8 @@ export class Game {
     if (this.cpuColor === this.engine.turn) {
       this.scheduleCpuMove();
     }
+
+    this.syncAvBar();
   }
 
   /** The color the CPU plays, or null outside CPU mode. */
@@ -1008,7 +1015,7 @@ export class Game {
     }
   }
 
-  /** Mirror our own feed in the corner and keep the lobby buttons labeled. */
+  /** Mirror our own feed in the corner and keep media buttons labeled. */
   private updateMediaUi(): void {
     const video = document.getElementById('self-view') as HTMLVideoElement | null;
     if (video) {
@@ -1016,15 +1023,39 @@ export class Game {
       video.classList.toggle('hidden', !this.localCameraStream);
       if (this.localCameraStream) void video.play().catch(() => {});
     }
+
+    const cameraOn = Boolean(this.localCameraStream);
+    const micOn = Boolean(this.localMicStream);
+
     const cameraButton = document.getElementById('camera-toggle');
     if (cameraButton) {
-      cameraButton.textContent = this.localCameraStream ? 'Turn camera off' : 'Enable camera';
+      cameraButton.textContent = cameraOn ? 'Turn camera off' : 'Enable camera';
     }
     const micButton = document.getElementById('mic-toggle');
     if (micButton) {
-      micButton.textContent = this.localMicStream ? 'Mute mic' : 'Enable mic';
+      micButton.textContent = micOn ? 'Mute mic' : 'Enable mic';
     }
+
+    const gameCameraButton = document.getElementById('game-camera-toggle');
+    if (gameCameraButton) {
+      gameCameraButton.textContent = cameraOn ? 'Camera on' : 'Camera off';
+      gameCameraButton.classList.toggle('on', cameraOn);
+    }
+    const gameMicButton = document.getElementById('game-mic-toggle');
+    if (gameMicButton) {
+      gameMicButton.textContent = micOn ? 'Mic on' : 'Mic off';
+      gameMicButton.classList.toggle('on', micOn);
+    }
+
     document.getElementById('av-restart')?.classList.toggle('hidden', !this.onlineSession);
+    this.syncAvBar();
+  }
+
+  /** Show in-game camera/mic toggles during online play. */
+  private syncAvBar(): void {
+    document
+      .getElementById('av-bar')
+      ?.classList.toggle('hidden', !(this.inGame && this.mode === 'online'));
   }
 
   /**
@@ -1174,7 +1205,9 @@ export class Game {
     if (this.possessedMoves.length > 0) {
       this.hint.textContent = this.touchPlay
         ? 'Joystick \u2014 walk a legal path \u00b7 rest on a square \u2014 confirm the move'
-        : 'WASD \u2014 walk a legal path \u00b7 rest or Enter \u2014 confirm \u00b7 right-click \u2014 retreat';
+        : this.mode === 'online'
+          ? 'WASD \u2014 walk a legal path \u00b7 rest or Enter \u2014 confirm \u00b7 Camera/Mic \u2014 top-right'
+          : 'WASD \u2014 walk a legal path \u00b7 rest or Enter \u2014 confirm \u00b7 right-click \u2014 retreat';
     } else if (piece && piece.color === toMove) {
       this.hint.textContent = this.touchPlay
         ? `No legal moves from here \u2014 tap another ${toMove} piece to jump into it`
@@ -1355,13 +1388,17 @@ export class Game {
       if (this.onlineSession) begin('online', this.onlineSession.color);
     });
 
-    document
-      .getElementById('camera-toggle')
-      ?.addEventListener('click', () => void this.toggleCamera());
+    const bindMediaToggle = (id: string, toggle: () => Promise<void>): void => {
+      document.getElementById(id)?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void toggle();
+      });
+    };
 
-    document
-      .getElementById('mic-toggle')
-      ?.addEventListener('click', () => void this.toggleMicrophone());
+    bindMediaToggle('camera-toggle', () => this.toggleCamera());
+    bindMediaToggle('mic-toggle', () => this.toggleMicrophone());
+    bindMediaToggle('game-camera-toggle', () => this.toggleCamera());
+    bindMediaToggle('game-mic-toggle', () => this.toggleMicrophone());
 
     // Lives in the pause overlay (the cursor is captured during play); the
     // click must not bubble into the overlay's click-to-resume handler.
@@ -1380,9 +1417,12 @@ export class Game {
       });
     });
 
-    // Opened via an invite link (…?join=CODE): go straight to the lobby.
+    // Resume an online session after reload: stored session wins over the URL
+    // param so a stale ?join= link cannot steal the wrong seat.
+    const stored = getStoredOnlineSession();
     const joinCode = new URLSearchParams(window.location.search).get('join');
-    if (joinCode) void this.openOnlineLobby(joinCode);
+    const resumeCode = stored?.code ?? joinCode;
+    if (resumeCode) void this.openOnlineLobby(resumeCode, wasOnlineInGame());
   }
 
   /**
@@ -1390,13 +1430,18 @@ export class Game {
    * server, and show the invite link. The game itself starts on a click so
    * pointer lock is granted by a user gesture.
    */
-  private async openOnlineLobby(joinCode: string | null): Promise<void> {
+  private async openOnlineLobby(joinCode: string | null, resumeInGame = false): Promise<void> {
     const status = document.getElementById('online-status');
-    document.querySelector('#menu .modes')?.classList.add('hidden');
-    document.getElementById('online-panel')?.classList.remove('hidden');
+    const menu = document.getElementById('menu');
+    const onlinePanel = document.getElementById('online-panel');
+
+    if (!resumeInGame) {
+      document.querySelector('#menu .modes')?.classList.add('hidden');
+      onlinePanel?.classList.remove('hidden');
+    }
     if (status) {
       status.textContent = joinCode
-        ? `Joining game ${joinCode.toUpperCase()}\u2026`
+        ? `Rejoining game ${joinCode.toUpperCase()}\u2026`
         : 'Creating game\u2026';
     }
 
@@ -1404,11 +1449,22 @@ export class Game {
     try {
       session = joinCode ? await joinOnlineGame(joinCode) : await createOnlineGame();
     } catch (error) {
-      if (status) {
-        status.textContent = error instanceof Error ? error.message : 'Failed to reach the server';
+      if (!resumeInGame) {
+        if (status) {
+          status.textContent = error instanceof Error ? error.message : 'Failed to reach the server';
+        }
+      } else {
+        markOnlineInGame(false);
+        onlinePanel?.classList.remove('hidden');
+        document.querySelector('#menu .modes')?.classList.add('hidden');
+        if (status) {
+          status.textContent = error instanceof Error ? error.message : 'Could not rejoin your game';
+        }
       }
       return;
     }
+
+    syncGameUrl(session.code);
 
     this.onlineSession = session;
     this.online = new OnlineClient(session);
@@ -1428,6 +1484,13 @@ export class Game {
       this.syncOutgoingTracks();
     }
     this.updateMediaUi();
+
+    if (resumeInGame) {
+      menu?.classList.add('hidden');
+      onlinePanel?.classList.add('hidden');
+      this.startGame('online', session.color);
+      return;
+    }
 
     const inviteLink = document.getElementById('invite-link') as HTMLInputElement | null;
     if (inviteLink) {

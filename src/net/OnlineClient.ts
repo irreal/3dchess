@@ -8,6 +8,7 @@ const SERVER_URL: string = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:
  * tab joining the same code becomes the other player (handy for testing).
  */
 const SESSION_KEY = '3dchess-online-session';
+const IN_GAME_KEY = '3dchess-online-in-game';
 
 export interface OnlineSession {
   code: string;
@@ -49,18 +50,84 @@ export async function fetchIceServers(): Promise<RTCIceServer[]> {
   return FALLBACK_ICE_SERVERS;
 }
 
+export function getStoredOnlineSession(): OnlineSession | null {
+  return loadSession();
+}
+
+/** True when the player had entered the 3D board before the last reload. */
+export function wasOnlineInGame(): boolean {
+  return sessionStorage.getItem(IN_GAME_KEY) === '1';
+}
+
+export function markOnlineInGame(inGame: boolean): void {
+  if (inGame) sessionStorage.setItem(IN_GAME_KEY, '1');
+  else sessionStorage.removeItem(IN_GAME_KEY);
+}
+
+/** Keep the invite code in the URL so a reload can find the game. Token stays in sessionStorage. */
+export function syncGameUrl(code: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set('join', code);
+  history.replaceState(null, '', url);
+}
+
+export function clearStoredOnlineSession(): void {
+  sessionStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(IN_GAME_KEY);
+}
+
 export async function joinOnlineGame(code: string): Promise<OnlineSession> {
+  const normalized = code.toUpperCase();
   const stored = loadSession();
-  if (stored && stored.code === code.toUpperCase()) return stored; // reclaim our seat
-  const session = await post(`/api/games/${encodeURIComponent(code)}/join`);
+  if (stored && stored.code === normalized) {
+    try {
+      return await resumeOnlineGame(stored);
+    } catch {
+      clearStoredOnlineSession();
+    }
+  }
+  const session = await post(`/api/games/${encodeURIComponent(normalized)}/join`);
   saveSession(session);
   return session;
+}
+
+/** Reclaim an existing seat after a reload (validates the token with the server). */
+export async function resumeOnlineGame(session: OnlineSession): Promise<OnlineSession> {
+  const body = await postWithBody(`/api/games/${encodeURIComponent(session.code)}/resume`, {
+    token: session.token,
+  });
+  const restored = { code: body.code, token: body.token, color: body.color };
+  saveSession(restored);
+  return restored;
 }
 
 async function post(path: string): Promise<OnlineSession> {
   let response: Response;
   try {
     response = await fetch(`${SERVER_URL}${path}`, { method: 'POST' });
+  } catch {
+    throw new Error('Could not reach the game server');
+  }
+  const body = (await response.json().catch(() => null)) as
+    | (OnlineSession & { error?: string })
+    | null;
+  if (!response.ok || !body) {
+    throw new Error(body?.error ?? `Server error (${response.status})`);
+  }
+  return { code: body.code, token: body.token, color: body.color };
+}
+
+async function postWithBody(
+  path: string,
+  payload: Record<string, unknown>,
+): Promise<OnlineSession> {
+  let response: Response;
+  try {
+    response = await fetch(`${SERVER_URL}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
   } catch {
     throw new Error('Could not reach the game server');
   }

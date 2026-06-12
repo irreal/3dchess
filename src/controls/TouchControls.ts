@@ -2,17 +2,18 @@ import type { PossessionController } from './PossessionController';
 
 const JOYSTICK_RADIUS = 52;
 const LOOK_SENSITIVITY = 0.0028;
-/** Movement below this (px) on the look zone counts as a tap-to-possess. */
+/** Movement below this (px) counts as a tap rather than a drag. */
 const TAP_SLOP_PX = 14;
 
 /**
- * On-screen joystick, look zone, jump/duck buttons and pause for touch play.
+ * On-screen joystick, look pad, jump/duck buttons and pause for touch play.
  * Pointer lock is unreliable on mobile, so the controller runs in touch-engaged
  * mode instead.
  */
 export class TouchControls {
   private readonly root: HTMLElement;
-  private readonly lookZone: HTMLElement;
+  private readonly tapZone: HTMLElement;
+  private readonly lookPad: HTMLElement;
   private readonly stick: HTMLElement;
   private readonly jumpBtn: HTMLButtonElement;
   private readonly duckBtn: HTMLButtonElement;
@@ -23,8 +24,11 @@ export class TouchControls {
   private lookPointerId: number | null = null;
   private lookLast = { x: 0, y: 0 };
   private lookMoved = false;
+  private tapPointerId: number | null = null;
+  private tapLast = { x: 0, y: 0 };
+  private tapMoved = false;
 
-  /** Fired on a short tap in the look zone (possess a piece under the crosshair). */
+  /** Fired on a short tap on the board view (possess a piece under the crosshair). */
   onTap: (() => void) | null = null;
 
   /** Fired when the player hits pause. */
@@ -35,7 +39,8 @@ export class TouchControls {
     root: HTMLElement,
   ) {
     this.root = root;
-    this.lookZone = root.querySelector('#look-zone') as HTMLElement;
+    this.tapZone = root.querySelector('#tap-zone') as HTMLElement;
+    this.lookPad = root.querySelector('#look-pad') as HTMLElement;
     this.stick = root.querySelector('#joystick-stick') as HTMLElement;
     this.jumpBtn = root.querySelector('#touch-jump') as HTMLButtonElement;
     this.duckBtn = root.querySelector('#touch-duck') as HTMLButtonElement;
@@ -44,7 +49,8 @@ export class TouchControls {
     const joystickBase = root.querySelector('#joystick-base') as HTMLElement;
 
     joystickBase.addEventListener('pointerdown', this.onJoystickDown);
-    this.lookZone.addEventListener('pointerdown', this.onLookDown);
+    this.tapZone.addEventListener('pointerdown', this.onTapDown);
+    this.lookPad.addEventListener('pointerdown', this.onLookDown);
     this.jumpBtn.addEventListener('pointerdown', this.onJump);
     this.duckBtn.addEventListener('pointerdown', this.onDuckDown);
     this.duckBtn.addEventListener('pointerup', this.onDuckUp);
@@ -65,12 +71,14 @@ export class TouchControls {
     this.root.classList.add('hidden');
     this.resetJoystick();
     this.controller.setTouchDuck(false);
+    this.lookPad.classList.remove('dragging');
   }
 
   dispose(): void {
     const joystickBase = this.root.querySelector('#joystick-base') as HTMLElement;
     joystickBase.removeEventListener('pointerdown', this.onJoystickDown);
-    this.lookZone.removeEventListener('pointerdown', this.onLookDown);
+    this.tapZone.removeEventListener('pointerdown', this.onTapDown);
+    this.lookPad.removeEventListener('pointerdown', this.onLookDown);
     this.jumpBtn.removeEventListener('pointerdown', this.onJump);
     this.duckBtn.removeEventListener('pointerdown', this.onDuckDown);
     this.duckBtn.removeEventListener('pointerup', this.onDuckUp);
@@ -92,13 +100,23 @@ export class TouchControls {
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   };
 
+  private onTapDown = (event: PointerEvent): void => {
+    if (!this.controller.isActive) return;
+    event.preventDefault();
+    this.tapPointerId = event.pointerId;
+    this.tapLast = { x: event.clientX, y: event.clientY };
+    this.tapMoved = false;
+    this.tapZone.setPointerCapture(event.pointerId);
+  };
+
   private onLookDown = (event: PointerEvent): void => {
     if (!this.controller.isActive) return;
     event.preventDefault();
     this.lookPointerId = event.pointerId;
     this.lookLast = { x: event.clientX, y: event.clientY };
     this.lookMoved = false;
-    this.lookZone.setPointerCapture(event.pointerId);
+    this.lookPad.classList.add('dragging');
+    this.lookPad.setPointerCapture(event.pointerId);
   };
 
   private onJump = (event: PointerEvent): void => {
@@ -129,6 +147,15 @@ export class TouchControls {
       this.updateJoystick(event.clientX, event.clientY);
       return;
     }
+    if (event.pointerId === this.tapPointerId) {
+      event.preventDefault();
+      const dx = event.clientX - this.tapLast.x;
+      const dy = event.clientY - this.tapLast.y;
+      if (Math.abs(dx) > TAP_SLOP_PX || Math.abs(dy) > TAP_SLOP_PX) {
+        this.tapMoved = true;
+      }
+      return;
+    }
     if (event.pointerId === this.lookPointerId) {
       event.preventDefault();
       const dx = event.clientX - this.lookLast.x;
@@ -148,8 +175,14 @@ export class TouchControls {
       this.resetJoystick();
       return;
     }
+    if (event.pointerId === this.tapPointerId) {
+      if (!this.tapMoved) this.onTap?.();
+      this.tapPointerId = null;
+      this.tapMoved = false;
+      return;
+    }
     if (event.pointerId === this.lookPointerId) {
-      if (!this.lookMoved) this.onTap?.();
+      this.lookPad.classList.remove('dragging');
       this.lookPointerId = null;
       this.lookMoved = false;
     }
@@ -159,6 +192,8 @@ export class TouchControls {
     this.resetJoystick();
     this.controller.setTouchDuck(false);
     this.lookPointerId = null;
+    this.tapPointerId = null;
+    this.lookPad.classList.remove('dragging');
   };
 
   private updateJoystick(clientX: number, clientY: number): void {
