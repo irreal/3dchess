@@ -25,6 +25,7 @@ import {
 import { Chessboard } from './world/Chessboard';
 import { ChessSet } from './world/ChessSet';
 import { MoveHighlights } from './world/MoveHighlights';
+import { PieceAntics } from './world/PieceAntics';
 import { PossessionMarker } from './world/PossessionMarker';
 import { SquareIndicator } from './world/SquareIndicator';
 import {
@@ -156,11 +157,17 @@ export class Game {
 
   /** Outgoing presence stream state (online play). */
   private lastPresenceSentAt = 0;
-  private lastSentPresence = { coord: '', x: 0, z: 0, walking: false };
+  private lastSentPresence = { coord: '', x: 0, z: 0, walking: false, duck: false, jumps: 0 };
 
   /** Incoming presence: the friend's piece walking live, dead-reckoned. */
   private remoteWalk: RemoteWalk | null = null;
   private readonly tmpRemoteTarget = new THREE.Vector3();
+
+  /** Jump/duck squash-and-stretch for our piece and the friend's piece. */
+  private readonly localAntics = new PieceAntics();
+  private readonly remoteAntics = new PieceAntics();
+  /** Friend's cumulative jump count we already replayed (null = no baseline). */
+  private remoteJumpsSeen: number | null = null;
   private readonly enemyPointer: HTMLElement | null;
   private readonly enemyPointerGlyph: HTMLElement | null;
   private readonly tmpProjected = new THREE.Vector3();
@@ -183,6 +190,9 @@ export class Game {
 
     this.controller = new PossessionController(this.camera, this.renderer.domElement);
     this.controller.onCommitMove = (move) => this.playMove(move);
+    this.controller.onJump = () => {
+      if (!this.controller.isTransitioning) this.localAntics.jump();
+    };
     this.setupMenu();
     this.setupOverlay();
 
@@ -271,6 +281,15 @@ export class Game {
 
   private tick = (): void => {
     const delta = Math.min(this.clock.getDelta(), 0.1);
+
+    // Our own antics run before the controller so the camera rides the jump
+    // and the crouch this same frame (and before ChessSet so committed-move
+    // animations keep authority over the piece's vertical position).
+    this.localAntics.attach(this.inGame ? (this.chessSet.getPiece(this.possessedCoord) ?? null) : null);
+    this.localAntics.setDuck(this.controller.isLocked && this.controller.wantsDuck);
+    this.localAntics.update(delta);
+    this.controller.setVerticalPose(this.localAntics.height, this.localAntics.verticalScale);
+
     this.controller.update(delta);
     this.chessSet.setCrowd(
       this.controller.isTransitioning ? null : this.camera.position,
@@ -278,6 +297,9 @@ export class Game {
     );
     this.chessSet.update(delta);
     this.updateRemoteWalk(delta);
+    // The friend's antics run after ChessSet so the crowd system's home
+    // snapping doesn't stomp their jump height.
+    this.remoteAntics.update(delta);
     this.maybeSendPresence();
     this.syncPossessed();
     this.syncEnemyMarker();
@@ -485,7 +507,9 @@ export class Game {
   private applyRemoteMove(move: Move): void {
     // The real move supersedes any live walk preview; ChessSet animates the
     // mover from wherever the preview left it, so the handover is seamless.
+    // Antics detach too (restoring neutral scale/height) for the same reason.
     this.clearRemoteWalk();
+    this.remoteAntics.attach(null);
 
     this.engine.makeMove(move);
 
@@ -592,9 +616,18 @@ export class Game {
     const { x, z } = group.position;
     const walking = Math.hypot(x - home.x, z - home.z) > PRESENCE_WALK_EPSILON;
 
+    const duck = this.localAntics.isDucking;
+    const jumps = this.localAntics.jumpCount;
+
     const last = this.lastSentPresence;
     const moved = Math.hypot(x - last.x, z - last.z) > PRESENCE_MIN_DELTA;
-    if (this.possessedCoord === last.coord && walking === last.walking && (!walking || !moved)) {
+    if (
+      this.possessedCoord === last.coord &&
+      walking === last.walking &&
+      (!walking || !moved) &&
+      duck === last.duck &&
+      jumps === last.jumps
+    ) {
       return; // nothing the friend doesn't already know
     }
 
@@ -607,12 +640,14 @@ export class Game {
           pos: walking
             ? { x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100 }
             : undefined,
+          duck: duck || undefined,
+          jumps: jumps || undefined,
         },
       },
       true,
     );
     this.lastPresenceSentAt = now;
-    this.lastSentPresence = { coord: this.possessedCoord, x, z, walking };
+    this.lastSentPresence = { coord: this.possessedCoord, x, z, walking, duck, jumps };
   }
 
   // --- Live presence: playing the friend's movements back ------------------
@@ -631,6 +666,19 @@ export class Game {
       if (group && piece && this.inGame) {
         this.enemyMarker.leapTo(group, this.markerHeight(piece.type));
       }
+    }
+
+    // Antics replay: duck is held state; jumps is a cumulative counter, so a
+    // growing value triggers the same take-off physics on our side. A smaller
+    // value means the friend's client restarted — rebaseline without jumping.
+    this.remoteAntics.attach(this.chessSet.getPiece(presence.possessed) ?? null);
+    this.remoteAntics.setDuck(presence.duck === true);
+    const jumps = presence.jumps ?? 0;
+    if (this.remoteJumpsSeen === null || jumps < this.remoteJumpsSeen) {
+      this.remoteJumpsSeen = jumps;
+    } else if (jumps > this.remoteJumpsSeen) {
+      this.remoteJumpsSeen = jumps;
+      this.remoteAntics.jump();
     }
 
     if (presence.pos) {

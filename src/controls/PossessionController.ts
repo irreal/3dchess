@@ -65,6 +65,13 @@ export class PossessionController {
   /** Fired when the possessed piece confirms a move. */
   onCommitMove: ((move: Move) => void) | null = null;
 
+  /** Fired when the player presses jump (Space) while locked. */
+  onJump: (() => void) | null = null;
+
+  /** Camera follows the piece's antics: jump height and crouch/stretch. */
+  private verticalOffset = 0;
+  private eyeScale = 1;
+
   private readonly tmpPos = new THREE.Vector3();
   private readonly tmpAlt = new THREE.Vector3();
   private readonly tmpDir = new THREE.Vector3();
@@ -94,6 +101,17 @@ export class PossessionController {
   /** 0..1 progress of the rest-to-confirm timer, for the HUD ring. */
   get dwellProgress(): number {
     return this.active ? Math.min(1, this.dwell / DWELL_COMMIT_SECONDS) : 0;
+  }
+
+  /** Duck (Ctrl) is currently held. */
+  get wantsDuck(): boolean {
+    return this.keys.has('ControlLeft') || this.keys.has('ControlRight');
+  }
+
+  /** Jump height and vertical scale from the piece antics, set every frame. */
+  setVerticalPose(offset: number, scale: number): void {
+    this.verticalOffset = offset;
+    this.eyeScale = scale;
   }
 
   lock(): void {
@@ -192,7 +210,9 @@ export class PossessionController {
       : this.tmpPos.copy(this.basePos);
     possessed.group.position.x = pos.x;
     possessed.group.position.z = pos.z;
-    this.camera.position.set(pos.x, this.eyeHeight, pos.z);
+    // The eye rides the antics: up with jumps, down (or stretched) with the
+    // body's current squash, so first person feels the hop and the crouch.
+    this.camera.position.set(pos.x, this.verticalOffset + this.eyeHeight * this.eyeScale, pos.z);
   }
 
   dispose(): void {
@@ -387,6 +407,10 @@ export class PossessionController {
     this.keys.add(event.code);
     if (event.code === 'Enter' && this.controls.isLocked) {
       this.wantCommit = true;
+    }
+    if (event.code === 'Space' && this.controls.isLocked && !event.repeat) {
+      event.preventDefault(); // keep Space from re-triggering a focused button
+      this.onJump?.();
     }
   };
 

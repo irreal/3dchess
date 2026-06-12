@@ -12,15 +12,33 @@ const MAX_COORD = 50;
  */
 export function sanitizePresence(raw: unknown): PresencePayload | null {
   if (typeof raw !== 'object' || raw === null) return null;
-  const { possessed, pos } = raw as { possessed?: unknown; pos?: unknown };
+  const { possessed, pos, duck, jumps } = raw as {
+    possessed?: unknown;
+    pos?: unknown;
+    duck?: unknown;
+    jumps?: unknown;
+  };
 
   if (typeof possessed !== 'string' || !SQUARE_RE.test(possessed)) return null;
-  if (pos === undefined || pos === null) return { possessed };
+  if (duck !== undefined && typeof duck !== 'boolean') return null;
+  if (
+    jumps !== undefined &&
+    (typeof jumps !== 'number' || !Number.isInteger(jumps) || jumps < 0 || jumps > 1e9)
+  ) {
+    return null;
+  }
+
+  const clean: PresencePayload = { possessed };
+  if (duck === true) clean.duck = true;
+  if (typeof jumps === 'number' && jumps > 0) clean.jumps = jumps;
+
+  if (pos === undefined || pos === null) return clean;
 
   if (typeof pos !== 'object') return null;
   const { x, z } = pos as { x?: unknown; z?: unknown };
   if (typeof x !== 'number' || !Number.isFinite(x) || Math.abs(x) > MAX_COORD) return null;
   if (typeof z !== 'number' || !Number.isFinite(z) || Math.abs(z) > MAX_COORD) return null;
 
-  return { possessed, pos: { x, z } };
+  clean.pos = { x, z };
+  return clean;
 }

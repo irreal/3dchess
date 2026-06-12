@@ -33,6 +33,10 @@ export interface PresencePayload {
   possessed: string;
   /** World position while displaced from the home square; absent at rest. */
   pos?: { x: number; z: number };
+  /** Duck (crouch) is held; absent when standing. */
+  duck?: boolean;
+  /** Cumulative take-off count; the receiver replays jumps it hasn't seen. */
+  jumps?: number;
 }
 
 /** A move after the server validated and applied it. */

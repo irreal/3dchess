@@ -39,6 +39,11 @@ export interface PresencePayload {
   possessed: string;
   /** World position while displaced from the home square; absent at rest. */
   pos?: { x: number; z: number };
+  /** Duck (crouch) is held; absent when standing. */
+  duck?: boolean;
+  /** Cumulative take-off count — the receiver replays the jump physics
+   * locally whenever this grows, so animations stay perfect at any rate. */
+  jumps?: number;
 }
 
 export interface AppliedMove extends MovePayload {

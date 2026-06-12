@@ -170,6 +170,22 @@ function fullRoom(): { room: GameRoom; white: string; black: string } {
     null,
     'non-numeric position rejected',
   );
+
+  // Antics fields: duck flag and cumulative jump counter.
+  assertEqual(
+    JSON.stringify(sanitizePresence({ possessed: 'e4', duck: true, jumps: 3 })),
+    '{"possessed":"e4","duck":true,"jumps":3}',
+    'duck and jumps pass through',
+  );
+  assertEqual(
+    JSON.stringify(sanitizePresence({ possessed: 'e4', duck: false, jumps: 0 })),
+    '{"possessed":"e4"}',
+    'falsy duck/jumps are omitted',
+  );
+  assertEqual(sanitizePresence({ possessed: 'e4', duck: 'yes' }), null, 'non-bool duck rejected');
+  assertEqual(sanitizePresence({ possessed: 'e4', jumps: 1.5 }), null, 'fractional jumps rejected');
+  assertEqual(sanitizePresence({ possessed: 'e4', jumps: -1 }), null, 'negative jumps rejected');
+  assertEqual(sanitizePresence({ possessed: 'e4', jumps: 1e12 }), null, 'absurd jumps rejected');
 }
 
 // --- Expiry sweep ---
