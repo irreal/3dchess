@@ -35,10 +35,16 @@ export async function fetchIceServers(): Promise<RTCIceServer[]> {
     const response = await fetch(`${SERVER_URL}/api/ice`);
     const body = (await response.json()) as { iceServers?: RTCIceServer[] } | null;
     if (response.ok && Array.isArray(body?.iceServers) && body.iceServers.length > 0) {
+      const urls = body.iceServers.flatMap((s) => (Array.isArray(s.urls) ? s.urls : [s.urls]));
+      const turnUrls = urls.filter((url) => String(url).startsWith('turn'));
+      console.info(
+        `[rtc] ICE config from server: ${urls.length} urls, ${turnUrls.length} TURN`,
+      );
       return body.iceServers;
     }
-  } catch {
-    // Fall through to STUN.
+    console.warn('[rtc] server returned no usable ICE config, falling back to STUN only');
+  } catch (error) {
+    console.warn('[rtc] failed to fetch ICE config, falling back to STUN only', error);
   }
   return FALLBACK_ICE_SERVERS;
 }

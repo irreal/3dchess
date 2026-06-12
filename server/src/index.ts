@@ -25,6 +25,15 @@ const RTC_BUCKET_CAPACITY = 40;
 const RTC_BUCKET_REFILL_PER_S = 10;
 
 /**
+ * Signaling must be reliable or WebRTC negotiation deadlocks: an offer lost
+ * while the opponent's socket is down means neither side ever answers. Any
+ * signal that can't be delivered right now is queued per seat and flushed
+ * when that seat (re)connects.
+ */
+const RTC_OUTBOX_LIMIT = 64;
+const rtcOutbox = new Map<string, Partial<Record<Color, unknown[]>>>();
+
+/**
  * Cloudflare Realtime TURN: when the secrets are configured, /api/ice mints
  * short-lived TURN credentials so clients behind symmetric NATs can still
  * connect their calls. Without them (local dev), clients get STUN only.
@@ -208,6 +217,15 @@ function handleConnection(ws: WebSocket, room: GameRoom, color: Color): void {
   send(ws, { type: 'opponent', connected: opponent !== undefined });
   notifyOpponent(room, color, true);
 
+  // Deliver signaling that arrived while this seat's socket was down.
+  const queued = rtcOutbox.get(room.code)?.[color];
+  if (queued && queued.length > 0) {
+    console.log(`[rtc] ${room.code}: flushing ${queued.length} queued signal(s) to ${color}`);
+    for (const payload of queued.splice(0)) {
+      send(ws, { type: 'rtc', payload: payload as Record<string, unknown> });
+    }
+  }
+
   let lastPresenceRelayAt = 0;
   let rtcTokens = RTC_BUCKET_CAPACITY;
   let rtcRefillAt = Date.now();
@@ -252,8 +270,22 @@ function handleConnection(ws: WebSocket, room: GameRoom, color: Color): void {
       const payload = message.payload;
       if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return;
       rtcTokens -= 1;
-      const opponent = seat[color === 'white' ? 'black' : 'white'];
-      if (opponent) send(opponent, { type: 'rtc', payload });
+
+      const opponentColor: Color = color === 'white' ? 'black' : 'white';
+      const opponent = seat[opponentColor];
+      if (opponent && opponent.readyState === opponent.OPEN) {
+        send(opponent, { type: 'rtc', payload });
+      } else {
+        let box = rtcOutbox.get(room.code);
+        if (!box) {
+          box = {};
+          rtcOutbox.set(room.code, box);
+        }
+        const queue = (box[opponentColor] ??= []);
+        queue.push(payload);
+        if (queue.length > RTC_OUTBOX_LIMIT) queue.shift();
+        console.log(`[rtc] ${room.code}: ${opponentColor} offline, queued signal (${queue.length})`);
+      }
       return;
     }
 
@@ -337,6 +369,7 @@ setInterval(() => {
     seat?.white?.close(4001, 'Game expired');
     seat?.black?.close(4001, 'Game expired');
     seats.delete(code);
+    rtcOutbox.delete(code);
   }
 }, SWEEP_INTERVAL_MS).unref();
 

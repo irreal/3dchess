@@ -861,10 +861,15 @@ export class Game {
       // Route by kind: camera frames go to the 3D face screen, voice to a
       // plain audio element. Either can exist without the other.
       this.videoCall.onRemoteMedia = (stream) => {
-        this.faceScreen.setStream(stream && stream.getVideoTracks().length > 0 ? stream : null);
+        const video = stream?.getVideoTracks().length ?? 0;
+        const audio = stream?.getAudioTracks().length ?? 0;
+        console.info(`[rtc] remote media now: ${video} video, ${audio} audio track(s)`);
+        this.faceScreen.setStream(stream && video > 0 ? stream : null);
         this.remoteAudio.srcObject = stream;
-        if (stream && stream.getAudioTracks().length > 0) {
-          void this.remoteAudio.play().catch(() => {});
+        if (stream && audio > 0) {
+          void this.remoteAudio
+            .play()
+            .catch((error) => console.warn('[rtc] audio autoplay blocked; click unblocks', error));
         }
       };
     }
@@ -885,6 +890,7 @@ export class Game {
       video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
     });
     if (!stream) return;
+    console.info('[rtc] camera enabled');
     this.localCameraStream = stream;
     this.syncOutgoingTracks();
     this.updateMediaUi();
@@ -903,6 +909,7 @@ export class Game {
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
     if (!stream) return;
+    console.info('[rtc] microphone enabled');
     this.localMicStream = stream;
     this.syncOutgoingTracks();
     this.updateMediaUi();
