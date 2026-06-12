@@ -100,6 +100,13 @@ export class VideoCall {
     this.pc.ontrack = ({ track }) => {
       log(`remote ${track.kind} track arrived (muted: ${track.muted})`);
       const add = () => {
+        // replaceTrack(null) leaves a muted video track that still holds the
+        // last decoded frame — treat it as absent so the face screen falls
+        // back to the cartoon placeholder.
+        if (track.kind === 'video' && track.muted) {
+          drop();
+          return;
+        }
         if (!this.remote.getTracks().includes(track)) this.remote.addTrack(track);
         log(`remote ${track.kind} track flowing`);
         this.notifyRemote();
@@ -141,6 +148,11 @@ export class VideoCall {
   }
 
   private notifyRemote(): void {
+    for (const track of [...this.remote.getTracks()]) {
+      if (track.readyState === 'ended' || (track.kind === 'video' && track.muted)) {
+        this.remote.removeTrack(track);
+      }
+    }
     this.onRemoteMedia?.(this.remote.getTracks().length > 0 ? this.remote : null);
   }
 

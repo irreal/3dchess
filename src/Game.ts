@@ -916,9 +916,9 @@ export class Game {
       // Route by kind: camera frames go to the 3D face screen, voice to a
       // plain audio element. Either can exist without the other.
       this.videoCall.onRemoteMedia = (stream) => {
-        const video = stream?.getVideoTracks().length ?? 0;
+        const video = stream?.getVideoTracks().filter((t) => t.readyState === 'live' && !t.muted).length ?? 0;
         const audio = stream?.getAudioTracks().length ?? 0;
-        console.info(`[rtc] remote media now: ${video} video, ${audio} audio track(s)`);
+        console.info(`[rtc] remote media now: ${video} live video, ${audio} audio track(s)`);
         this.faceScreen.setStream(stream && video > 0 ? stream : null);
         this.remoteAudio.srcObject = stream;
         if (stream && audio > 0) {

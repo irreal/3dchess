@@ -86,6 +86,8 @@ export class FaceScreen {
   private readonly placeholder: THREE.CanvasTexture;
   private texture: THREE.VideoTexture | null = null;
   private stream: MediaStream | null = null;
+  private videoTrack: MediaStreamTrack | null = null;
+  private readonly onVideoStateChange = (): void => this.applyVideoState();
 
   constructor() {
     this.object.name = 'face-screen';
@@ -114,19 +116,43 @@ export class FaceScreen {
   }
 
   setStream(stream: MediaStream | null): void {
-    if (stream === this.stream) return;
+    if (stream === this.stream && stream !== null) return;
+    this.clearVideoTrackListeners();
     this.stream = stream;
+    this.videoTrack = stream?.getVideoTracks()[0] ?? null;
+    if (this.videoTrack) {
+      this.videoTrack.addEventListener('mute', this.onVideoStateChange);
+      this.videoTrack.addEventListener('unmute', this.onVideoStateChange);
+      this.videoTrack.addEventListener('ended', this.onVideoStateChange);
+    }
+    this.applyVideoState();
+  }
 
-    this.texture?.dispose();
-    this.texture = null;
+  private clearVideoTrackListeners(): void {
+    if (!this.videoTrack) return;
+    this.videoTrack.removeEventListener('mute', this.onVideoStateChange);
+    this.videoTrack.removeEventListener('unmute', this.onVideoStateChange);
+    this.videoTrack.removeEventListener('ended', this.onVideoStateChange);
+    this.videoTrack = null;
+  }
 
-    if (stream) {
-      this.video.srcObject = stream;
+  private applyVideoState(): void {
+    const live =
+      this.stream !== null &&
+      this.videoTrack !== null &&
+      this.videoTrack.readyState === 'live' &&
+      !this.videoTrack.muted;
+
+    if (live) {
+      if (this.texture) return;
+      this.video.srcObject = this.stream;
       void this.video.play().catch(() => {});
       this.texture = new THREE.VideoTexture(this.video);
       this.texture.colorSpace = THREE.SRGBColorSpace;
       this.screenMaterial.map = this.texture;
     } else {
+      this.texture?.dispose();
+      this.texture = null;
       this.video.srcObject = null;
       this.screenMaterial.map = this.placeholder;
     }
