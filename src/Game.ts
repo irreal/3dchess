@@ -1,21 +1,61 @@
 import * as THREE from 'three';
 import { ChessEngine } from './chess/ChessEngine';
 import { moveToSan } from './chess/notation';
-import { oppositeColor, sameSquare, type Move, type Square } from './chess/types';
-import { FirstPersonController } from './controls/FirstPersonController';
+import {
+  oppositeColor,
+  sameSquare,
+  type Move,
+  type PieceType,
+  type Square,
+} from './chess/types';
+import { PossessionController } from './controls/PossessionController';
+import { buildCorridors } from './controls/corridors';
 import { Chessboard } from './world/Chessboard';
 import { ChessSet } from './world/ChessSet';
 import { MoveHighlights } from './world/MoveHighlights';
 import { SquareIndicator } from './world/SquareIndicator';
-import { BOARD_SIZE, GROUND_Y, PLAYER_EYE_HEIGHT, squareCenter, squareCoord } from './constants';
+import {
+  BOARD_SIZE,
+  GROUND_Y,
+  PIECE_EYE_HEIGHT,
+  PLAYER_EYE_HEIGHT,
+  squareCenter,
+  squareCoord,
+} from './constants';
 
 const CROSSHAIR = new THREE.Vector2(0, 0); // center of the screen in NDC
+
+const PIECE_GLYPHS: Record<PieceType, string> = {
+  king: '\u265A',
+  queen: '\u265B',
+  rook: '\u265C',
+  bishop: '\u265D',
+  knight: '\u265E',
+  pawn: '\u265F',
+};
+
+const PIECE_NAMES: Record<PieceType, string> = {
+  king: 'King',
+  queen: 'Queen',
+  rook: 'Rook',
+  bishop: 'Bishop',
+  knight: 'Knight',
+  pawn: 'Pawn',
+};
+
+function coordToSquare(coord: string): Square {
+  return { file: coord.charCodeAt(0) - 97, rank: Number(coord.slice(1)) - 1 };
+}
+
+function capitalize(s: string): string {
+  return s[0].toUpperCase() + s.slice(1);
+}
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.PerspectiveCamera;
-  private readonly controller: FirstPersonController;
+  private readonly controller: PossessionController;
   private readonly clock = new THREE.Clock();
 
   private readonly chessboard: Chessboard;
@@ -25,18 +65,26 @@ export class Game {
   private readonly raycaster = new THREE.Raycaster();
 
   private readonly engine = new ChessEngine();
-  private selected: Square | null = null;
-  private selectedMoves: Move[] = [];
+  private possessedCoord = 'e1';
+  private possessedMoves: Move[] = [];
   private sanCache: { move: Move; san: string } | null = null;
   private gameOver = false;
+
   private readonly hud: HTMLElement | null;
+  private readonly badge: HTMLElement | null;
+  private readonly badgeGlyph: HTMLElement | null;
+  private readonly badgeName: HTMLElement | null;
+  private readonly badgeSquare: HTMLElement | null;
+  private readonly hint: HTMLElement | null;
+  private readonly dwellRing: HTMLElement | null;
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = this.createRenderer();
     this.scene = this.createScene();
     this.camera = this.createCamera();
 
-    this.controller = new FirstPersonController(this.camera, this.renderer.domElement);
+    this.controller = new PossessionController(this.camera, this.renderer.domElement);
+    this.controller.onCommitMove = (move) => this.playMove(move);
     this.setupOverlay();
 
     this.addLights();
@@ -55,7 +103,17 @@ export class Game {
     this.scene.add(this.moveHighlights.object);
 
     this.hud = document.getElementById('hud');
-    this.updateHud();
+    this.badge = document.getElementById('piece-badge');
+    this.badgeGlyph = document.getElementById('badge-glyph');
+    this.badgeName = document.getElementById('badge-name');
+    this.badgeSquare = document.getElementById('badge-square');
+    this.hint = document.getElementById('hint');
+    this.dwellRing = document.getElementById('dwell-ring');
+
+    // The game starts with the player inside the white king, facing black.
+    this.possess('e1', true);
+    const kingCenter = squareCenter(4, 0);
+    this.camera.lookAt(kingCenter.x, PIECE_EYE_HEIGHT.king, kingCenter.z + 8);
 
     window.addEventListener('resize', this.onResize);
     window.addEventListener('mousedown', this.onMouseDown);
@@ -69,26 +127,75 @@ export class Game {
     const delta = Math.min(this.clock.getDelta(), 0.1);
     this.controller.update(delta);
     this.chessSet.update(delta);
+    this.syncPossessed();
     this.updateHoverIndicator();
+    this.updateDwellRing();
     this.renderer.render(this.scene, this.camera);
   };
 
-  /** The square the crosshair is pointing at (directly, or via a piece on it). */
+  /** Take control of the piece on a square (instantly, or by leaping to it). */
+  private possess(coord: string, instant: boolean): void {
+    const piece = this.engine.pieceAt(coordToSquare(coord));
+    const group = this.chessSet.getPiece(coord);
+    if (!piece || !group) return;
+
+    this.possessedCoord = coord;
+    this.controller.possess({ coord, group, eyeHeight: PIECE_EYE_HEIGHT[piece.type] }, instant);
+    this.refreshMoveState();
+  }
+
+  /**
+   * Recompute everything derived from the possessed piece and the turn:
+   * legal moves, walkable corridors, highlights and HUD.
+   */
+  private refreshMoveState(): void {
+    const square = coordToSquare(this.possessedCoord);
+    this.possessedMoves = this.engine.legalMovesFrom(square);
+    this.sanCache = null;
+
+    if (this.possessedMoves.length > 0) {
+      this.moveHighlights.show(square, this.possessedMoves);
+    } else {
+      this.moveHighlights.clear();
+    }
+    this.controller.setCorridors(buildCorridors(this.possessedMoves));
+
+    this.updateHud();
+    this.updateBadge();
+    this.updateHint();
+  }
+
+  /** Keep the controller pointed at the live mesh (promotion swaps it). */
+  private syncPossessed(): void {
+    if (this.controller.isTransitioning) return;
+    const group = this.chessSet.getPiece(this.possessedCoord);
+    const piece = this.engine.pieceAt(coordToSquare(this.possessedCoord));
+    if (group && piece) {
+      this.controller.syncPossessed(group, PIECE_EYE_HEIGHT[piece.type]);
+    }
+  }
+
+  /**
+   * The square the crosshair is pointing at (directly, or via a piece on it).
+   * Hits belonging to the possessed piece itself are ignored.
+   */
   private pickSquare(): Square | null {
     this.raycaster.setFromCamera(CROSSHAIR, this.camera);
     const targets: THREE.Object3D[] = [...this.chessboard.squares, this.chessSet.object];
-    const hit = this.raycaster.intersectObjects(targets, true)[0];
-    if (!hit) return null;
+    const hits = this.raycaster.intersectObjects(targets, true);
 
-    // Walk up to the first ancestor that knows its square coordinate
-    // (square meshes and piece groups both carry userData.coord).
-    let object: THREE.Object3D | null = hit.object;
-    while (object) {
-      const coord = object.userData.coord as string | null | undefined;
-      if (coord) {
-        return { file: coord.charCodeAt(0) - 97, rank: Number(coord.slice(1)) - 1 };
+    for (const hit of hits) {
+      // Walk up to the first ancestor that knows its square coordinate
+      // (square meshes and piece groups both carry userData.coord).
+      let object: THREE.Object3D | null = hit.object;
+      let coord: string | null = null;
+      while (object && !coord) {
+        coord = (object.userData.coord as string | null | undefined) ?? null;
+        object = object.parent;
       }
-      object = object.parent;
+      if (!coord) continue; // e.g. a captured piece flying off the board
+      if (coord === this.possessedCoord) continue; // the piece we are inside
+      return coordToSquare(coord);
     }
     return null;
   }
@@ -100,17 +207,15 @@ export class Game {
       return;
     }
 
-    // When a piece is selected and the crosshair targets one of its legal
-    // moves, preview the move in algebraic notation (e.g. "Nf3", "exd5+").
+    // When the crosshair targets a legal destination of the possessed piece,
+    // preview the move in algebraic notation (e.g. "Nf3", "exd5+").
     let text = squareCoord(square.file, square.rank);
-    if (this.selected) {
-      const move = this.selectedMoves.find((candidate) => sameSquare(candidate.to, square));
-      if (move) {
-        if (this.sanCache?.move !== move) {
-          this.sanCache = { move, san: moveToSan(this.engine, move) };
-        }
-        text = this.sanCache.san;
+    const move = this.possessedMoves.find((candidate) => sameSquare(candidate.to, square));
+    if (move) {
+      if (this.sanCache?.move !== move) {
+        this.sanCache = { move, san: moveToSan(this.engine, move) };
       }
+      text = this.sanCache.san;
     }
 
     const { x, z } = squareCenter(square.file, square.rank);
@@ -123,52 +228,36 @@ export class Game {
   }
 
   private onMouseDown = (event: MouseEvent): void => {
-    if (event.button !== 0 || !this.controller.isLocked || this.gameOver) return;
+    if (!this.controller.isLocked) return;
 
-    const square = this.pickSquare();
-    if (!square) {
-      this.clearSelection();
+    // Right click: retreat to the origin square, abandoning the walk.
+    if (event.button === 2) {
+      this.controller.cancelGlide();
       return;
     }
+    if (event.button !== 0 || this.gameOver) return;
 
-    // If a piece is selected and the clicked square is a legal target, move.
-    if (this.selected) {
-      const move = this.selectedMoves.find((candidate) => sameSquare(candidate.to, square));
-      if (move) {
-        this.playMove(move);
-        return;
-      }
-    }
+    // Left click on a friendly piece: leap into it.
+    const square = this.pickSquare();
+    if (!square) return;
 
-    // Otherwise (re)select if it's a piece of the side to move.
     const piece = this.engine.pieceAt(square);
-    if (piece && piece.color === this.engine.turn) {
-      this.selected = square;
-      this.selectedMoves = this.engine.legalMovesFrom(square);
-      this.moveHighlights.show(square, this.selectedMoves);
-    } else {
-      this.clearSelection();
+    const coord = squareCoord(square.file, square.rank);
+    if (piece && piece.color === this.engine.turn && coord !== this.possessedCoord) {
+      this.possess(coord, false);
     }
   };
 
   private playMove(move: Move): void {
     this.engine.makeMove(move);
     this.chessSet.applyMove(move);
-    this.clearSelection();
-    this.updateHud();
-  }
-
-  private clearSelection(): void {
-    this.selected = null;
-    this.selectedMoves = [];
-    this.sanCache = null;
-    this.moveHighlights.clear();
+    this.possessedCoord = squareCoord(move.to.file, move.to.rank);
+    this.refreshMoveState();
   }
 
   private updateHud(): void {
     if (!this.hud) return;
 
-    const capitalize = (s: string): string => s[0].toUpperCase() + s.slice(1);
     const toMove = capitalize(this.engine.turn);
     const winner = capitalize(oppositeColor(this.engine.turn));
 
@@ -188,6 +277,45 @@ export class Game {
         this.gameOver = true;
         break;
     }
+  }
+
+  private updateBadge(): void {
+    const piece = this.engine.pieceAt(coordToSquare(this.possessedCoord));
+    if (!this.badge || !piece) return;
+
+    this.badge.classList.toggle('white', piece.color === 'white');
+    this.badge.classList.toggle('black', piece.color === 'black');
+    if (this.badgeGlyph) this.badgeGlyph.textContent = PIECE_GLYPHS[piece.type];
+    if (this.badgeName) this.badgeName.textContent = PIECE_NAMES[piece.type];
+    if (this.badgeSquare) this.badgeSquare.textContent = this.possessedCoord;
+  }
+
+  private updateHint(): void {
+    if (!this.hint) return;
+
+    if (this.gameOver) {
+      this.hint.textContent = 'Game over \u2014 reload to play again';
+      return;
+    }
+
+    const piece = this.engine.pieceAt(coordToSquare(this.possessedCoord));
+    const toMove = this.engine.turn;
+
+    if (this.possessedMoves.length > 0) {
+      this.hint.textContent =
+        'WASD \u2014 walk a legal path \u00b7 rest or Enter \u2014 confirm \u00b7 right-click \u2014 retreat';
+    } else if (piece && piece.color === toMove) {
+      this.hint.textContent = `No legal moves from here \u2014 click another ${toMove} piece to jump into it`;
+    } else {
+      this.hint.textContent = `${capitalize(toMove)} to move \u2014 click a ${toMove} piece to take control`;
+    }
+  }
+
+  private updateDwellRing(): void {
+    if (!this.dwellRing) return;
+    const progress = this.controller.dwellProgress;
+    this.dwellRing.classList.toggle('active', progress > 0);
+    this.dwellRing.style.setProperty('--p', progress.toFixed(3));
   }
 
   private createRenderer(): THREE.WebGLRenderer {
@@ -215,7 +343,7 @@ export class Game {
       0.1,
       200,
     );
-    // Start just outside the board, looking toward its center.
+    // Placeholder pose; the constructor immediately possesses the white king.
     camera.position.set(0, PLAYER_EYE_HEIGHT, BOARD_SIZE / 2 + 4);
     camera.lookAt(0, 0.5, 0);
     return camera;

@@ -80,18 +80,123 @@
         pointer-events: none;
         z-index: 5;
       }
+
+      /* Move-confirm progress ring around the crosshair. */
+      #dwell-ring {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: 54px;
+        height: 54px;
+        margin: -27px 0 0 -27px;
+        border-radius: 50%;
+        background: conic-gradient(#55ff99 calc(var(--p, 0) * 1turn), rgba(255, 255, 255, 0.15) 0);
+        -webkit-mask: radial-gradient(closest-side, transparent 72%, #000 74%);
+        mask: radial-gradient(closest-side, transparent 72%, #000 74%);
+        opacity: 0;
+        transition: opacity 0.15s;
+        pointer-events: none;
+        z-index: 5;
+      }
+
+      #dwell-ring.active {
+        opacity: 1;
+      }
+
+      /* Which piece the player is currently inside. */
+      #piece-badge {
+        position: fixed;
+        left: 24px;
+        bottom: 24px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 22px 10px 16px;
+        border-radius: 16px;
+        background: rgba(20, 24, 28, 0.75);
+        color: #fff;
+        pointer-events: none;
+        user-select: none;
+        z-index: 5;
+      }
+
+      #piece-badge .glyph {
+        font-family: serif; /* chess glyphs render best in serif fonts */
+        font-size: 58px;
+        line-height: 1;
+      }
+
+      #piece-badge.white .glyph {
+        color: #f0e9dc;
+        text-shadow:
+          0 0 2px rgba(0, 0, 0, 0.9),
+          0 2px 6px rgba(0, 0, 0, 0.5);
+      }
+
+      #piece-badge.black .glyph {
+        color: #262220;
+        text-shadow:
+          0 0 2px rgba(255, 255, 255, 0.85),
+          0 2px 6px rgba(0, 0, 0, 0.5);
+      }
+
+      #piece-badge .text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      #piece-badge .text strong {
+        font-size: 17px;
+        letter-spacing: 0.02em;
+      }
+
+      #piece-badge .text small {
+        font-size: 13px;
+        color: #9fb2c0;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      #hint {
+        position: fixed;
+        bottom: 28px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: min(80vw, 720px);
+        padding: 8px 18px;
+        border-radius: 999px;
+        background: rgba(20, 24, 28, 0.6);
+        color: rgba(255, 255, 255, 0.85);
+        font-size: 14px;
+        text-align: center;
+        pointer-events: none;
+        z-index: 5;
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
     <div id="hud">White to move</div>
     <div id="crosshair"></div>
+    <div id="dwell-ring"></div>
+    <div id="piece-badge" class="white">
+      <span class="glyph" id="badge-glyph">&#x265A;</span>
+      <span class="text">
+        <strong id="badge-name">King</strong>
+        <small id="badge-square">e1</small>
+      </span>
+    </div>
+    <div id="hint">Look at a white piece and click to take control</div>
     <div id="overlay">
       <h1>3D Chess</h1>
       <p>Click to play</p>
+      <p>You play from inside your pieces — the game starts in the white king.</p>
       <p>
-        WASD — move &nbsp;·&nbsp; Mouse — look &nbsp;·&nbsp; Shift — run &nbsp;·&nbsp; Ctrl — crouch
-        &nbsp;·&nbsp; Space — jump &nbsp;·&nbsp; Esc — release cursor
+        Mouse — look &nbsp;·&nbsp; Click a friendly piece — jump into it<br />
+        WASD — walk along a legal path &nbsp;·&nbsp; Rest on a square or press Enter — confirm the
+        move<br />
+        Right-click — retreat to your square &nbsp;·&nbsp; Esc — release cursor
       </p>
     </div>
     <script type="module" src="/src/main.ts"></script>

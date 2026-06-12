@@ -107,6 +107,11 @@ export class ChessSet {
     }
   }
 
+  /** The visual piece group standing on a square, if any. */
+  getPiece(coord: string): THREE.Group | undefined {
+    return this.pieces.get(coord);
+  }
+
   /** Advances running piece animations. Call once per frame. */
   update(delta: number): void {
     for (let i = this.animations.length - 1; i >= 0; i--) {
