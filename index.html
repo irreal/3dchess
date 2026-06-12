@@ -25,7 +25,8 @@
         height: 100%;
       }
 
-      #overlay {
+      #overlay,
+      #menu {
         position: fixed;
         inset: 0;
         display: flex;
@@ -35,22 +36,74 @@
         gap: 12px;
         background: rgba(0, 0, 0, 0.6);
         color: #fff;
-        cursor: pointer;
         user-select: none;
         z-index: 10;
       }
 
-      #overlay.hidden {
+      #overlay {
+        cursor: pointer;
+      }
+
+      #menu {
+        background: rgba(0, 0, 0, 0.7);
+        gap: 18px;
+      }
+
+      #overlay.hidden,
+      #menu.hidden {
         display: none;
       }
 
-      #overlay h1 {
+      #overlay h1,
+      #menu h1 {
         font-size: 2rem;
         font-weight: 600;
       }
 
-      #overlay p {
+      #overlay p,
+      #menu p {
         color: #bbb;
+        text-align: center;
+      }
+
+      #menu .modes {
+        display: flex;
+        gap: 14px;
+        margin: 10px 0 6px;
+      }
+
+      #menu .modes button {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        min-width: 180px;
+        padding: 18px 22px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font: inherit;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          border-color 0.15s,
+          transform 0.15s;
+      }
+
+      #menu .modes button:hover {
+        background: rgba(255, 255, 255, 0.18);
+        border-color: rgba(255, 255, 255, 0.55);
+        transform: translateY(-2px);
+      }
+
+      #menu .modes button small {
+        font-size: 13px;
+        font-weight: 400;
+        color: #b6c4cf;
       }
 
       #hud {
@@ -188,16 +241,24 @@
       </span>
     </div>
     <div id="hint">Look at a white piece and click to take control</div>
-    <div id="overlay">
+    <div id="menu">
       <h1>3D Chess</h1>
-      <p>Click to play</p>
-      <p>You play from inside your pieces — the game starts in the white king.</p>
+      <p>You play from inside your pieces — the game starts in your king.</p>
+      <div class="modes">
+        <button id="mode-free">Free Play<small>control both sides</small></button>
+        <button id="mode-cpu-white">Play as White<small>CPU plays Black</small></button>
+        <button id="mode-cpu-black">Play as Black<small>CPU plays White</small></button>
+      </div>
       <p>
         Mouse — look &nbsp;·&nbsp; Click a friendly piece — jump into it<br />
         WASD — walk along a legal path &nbsp;·&nbsp; Rest on a square or press Enter — confirm the
         move<br />
         Right-click — retreat to your square &nbsp;·&nbsp; Esc — release cursor
       </p>
+    </div>
+    <div id="overlay" class="hidden">
+      <h1>Paused</h1>
+      <p>Click to resume</p>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -19,6 +19,13 @@ const CAPTURED_SPACING = 1.1;
 /** Gap between the board border and the first captured row. */
 const CAPTURED_MARGIN = 1.2;
 
+/** Pieces this close to the walking player step aside (crowd parting). */
+const DODGE_RADIUS = 1.3;
+/** How far a piece shifts when the player is right on top of it. */
+const DODGE_MAX = 0.6;
+/** How quickly pieces ease aside and back home. */
+const DODGE_LERP_RATE = 8;
+
 interface PieceAnimation {
   object: THREE.Object3D;
   from: THREE.Vector3;
@@ -46,6 +53,11 @@ export class ChessSet {
   private readonly pieces = new Map<string, THREE.Group>();
   private readonly animations: PieceAnimation[] = [];
   private readonly capturedCount: Record<PieceColor, number> = { white: 0, black: 0 };
+
+  private readonly crowdSource = new THREE.Vector3();
+  private readonly crowdDir = new THREE.Vector3(); // last direction of travel
+  private crowdActive = false;
+  private crowdExclude: string | null = null;
 
   constructor() {
     this.object = new THREE.Group();
@@ -112,7 +124,30 @@ export class ChessSet {
     return this.pieces.get(coord);
   }
 
-  /** Advances running piece animations. Call once per frame. */
+  /**
+   * Where the walking player currently is, so nearby pieces step aside.
+   * Pass a null source to let every piece return home (e.g. mid-flight).
+   */
+  setCrowd(source: THREE.Vector3 | null, excludeCoord: string | null): void {
+    if (source) {
+      // Remember the direction of travel; it defines which way "aside" is.
+      const dx = source.x - this.crowdSource.x;
+      const dz = source.z - this.crowdSource.z;
+      if (this.crowdActive && dx * dx + dz * dz > 1e-6) {
+        this.crowdDir.set(dx, 0, dz).normalize();
+      } else if (!this.crowdActive) {
+        this.crowdDir.set(0, 0, 0);
+      }
+      this.crowdSource.copy(source);
+      this.crowdActive = true;
+    } else {
+      this.crowdActive = false;
+      this.crowdDir.set(0, 0, 0);
+    }
+    this.crowdExclude = excludeCoord;
+  }
+
+  /** Advances piece animations and crowd dodging. Call once per frame. */
   update(delta: number): void {
     for (let i = this.animations.length - 1; i >= 0; i--) {
       const animation = this.animations[i];
@@ -127,6 +162,81 @@ export class ChessSet {
         this.animations.splice(i, 1);
         animation.onComplete?.();
       }
+    }
+
+    this.updateCrowd(delta);
+  }
+
+  /**
+   * Pieces near the player's corridor walk lean out of the way and ease back
+   * home afterwards — including the in-between squares of a knight path and
+   * the neighbors of a diagonal bishop pass.
+   */
+  private updateCrowd(delta: number): void {
+    const t = Math.min(1, DODGE_LERP_RATE * delta);
+    const animating = new Set(this.animations.map((animation) => animation.object));
+
+    for (const [coord, piece] of this.pieces) {
+      if (coord === this.crowdExclude || animating.has(piece)) continue;
+
+      const file = coord.charCodeAt(0) - 97;
+      const rank = Number(coord.slice(1)) - 1;
+      const home = squareCenter(file, rank);
+      const dodge = (piece.userData.dodge ??= new THREE.Vector3()) as THREE.Vector3;
+
+      let targetX = 0;
+      let targetZ = 0;
+      if (this.crowdActive) {
+        const dx = home.x - this.crowdSource.x;
+        const dz = home.z - this.crowdSource.z;
+        const distance = Math.hypot(dx, dz);
+        if (distance < DODGE_RADIUS) {
+          const push = DODGE_MAX * (1 - distance / DODGE_RADIUS);
+          let nx = 1;
+          let nz = 0;
+
+          if (this.crowdDir.lengthSq() > 0.5) {
+            // Step aside perpendicular to the player's travel — pushing
+            // straight away would herd pieces ahead along the corridor and
+            // the player walks through them anyway. The side is wherever
+            // the piece already sits relative to the path.
+            const along = dx * this.crowdDir.x + dz * this.crowdDir.z;
+            const latX = dx - along * this.crowdDir.x;
+            const latZ = dz - along * this.crowdDir.z;
+            const lateral = Math.hypot(latX, latZ);
+            if (lateral > 0.03) {
+              nx = latX / lateral;
+              nz = latZ / lateral;
+            } else {
+              // Dead ahead on the path: pick a side, sticking with one the
+              // piece has already chosen.
+              nx = -this.crowdDir.z;
+              nz = this.crowdDir.x;
+              if (dodge.x * nx + dodge.z * nz < 0) {
+                nx = -nx;
+                nz = -nz;
+              }
+            }
+          } else if (distance > 0.05) {
+            // Player isn't moving: fall back to a radial push.
+            nx = dx / distance;
+            nz = dz / distance;
+          } else if (dodge.lengthSq() > 1e-6) {
+            // Player is standing on this square; keep the current direction
+            // instead of flipping around a degenerate vector.
+            const length = Math.hypot(dodge.x, dodge.z);
+            nx = dodge.x / length;
+            nz = dodge.z / length;
+          }
+
+          targetX = nx * push;
+          targetZ = nz * push;
+        }
+      }
+
+      dodge.x = THREE.MathUtils.lerp(dodge.x, targetX, t);
+      dodge.z = THREE.MathUtils.lerp(dodge.z, targetZ, t);
+      piece.position.set(home.x + dodge.x, 0, home.z + dodge.z);
     }
   }
 

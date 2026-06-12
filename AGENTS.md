@@ -1,13 +1,13 @@
 # 3D Chess
 
-A first-person 3D chess experiment built with Vite, TypeScript and Three.js (no external chess library).
+A first-person 3D chess experiment built with Vite, TypeScript and Three.js. Game tracking, legal moves and end states come from the [chess.js](https://github.com/jhlywa/chess.js) library.
 
 The player experiences the game from inside their own pieces: the camera sits at eye height inside the possessed piece, you leap into another friendly piece by looking at it and clicking, and you move by walking the possessed piece along "corridors" built from its legal moves (knights walk their L-path through the elbow square). Resting on a legal square or pressing Enter commits the move.
 
 ## Structure
 
 - `src/Game.ts` — orchestrator: scene, render loop, input, HUD, possession flow
-- `src/chess/` — custom rules engine (`ChessEngine`), types, SAN notation
+- `src/chess/` — `ChessEngine`, a thin adapter over chess.js that emits the rich `Move` shape (capture squares, rook paths, SAN) the 3D layer consumes
 - `src/controls/` — `PossessionController` (look, piece-jumping, corridor traversal) and `corridors.ts` (legal-move rails)
 - `src/world/` — board, piece meshes, move highlights, square indicator
 - `tests/engine.test.ts` — engine unit tests, run with `npx tsx tests/engine.test.ts`

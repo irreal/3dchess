@@ -17,6 +17,8 @@ export interface Move {
   to: Square;
   piece: PieceType;
   color: PieceColor;
+  /** Standard algebraic notation, including +/# suffixes (from chess.js). */
+  san: string;
   /** Piece removed by this move, if any. */
   captured?: Piece;
   /** Where the captured piece actually stands (differs from `to` for en passant). */
@@ -31,7 +33,7 @@ export interface Move {
 }
 
 /** Status for the side to move. */
-export type GameStatus = 'playing' | 'check' | 'checkmate' | 'stalemate';
+export type GameStatus = 'playing' | 'check' | 'checkmate' | 'stalemate' | 'draw';
 
 export function oppositeColor(color: PieceColor): PieceColor {
   return color === 'white' ? 'black' : 'white';

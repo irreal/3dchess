@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { ChessEngine } from './chess/ChessEngine';
-import { moveToSan } from './chess/notation';
 import {
   oppositeColor,
   sameSquare,
   type Move,
+  type PieceColor,
   type PieceType,
   type Square,
 } from './chess/types';
@@ -24,6 +24,11 @@ import {
 } from './constants';
 
 const CROSSHAIR = new THREE.Vector2(0, 0); // center of the screen in NDC
+
+/** Pause before the CPU answers, so its reply doesn't feel instantaneous. */
+const CPU_MOVE_DELAY_MS = 900;
+
+export type GameMode = 'free' | 'cpu';
 
 const PIECE_GLYPHS: Record<PieceType, string> = {
   king: '\u265A',
@@ -67,8 +72,11 @@ export class Game {
   private readonly engine = new ChessEngine();
   private possessedCoord = 'e1';
   private possessedMoves: Move[] = [];
-  private sanCache: { move: Move; san: string } | null = null;
   private gameOver = false;
+
+  private mode: GameMode = 'free';
+  private playerColor: PieceColor = 'white';
+  private cpuMoveTimer: number | null = null;
 
   private readonly hud: HTMLElement | null;
   private readonly badge: HTMLElement | null;
@@ -85,6 +93,7 @@ export class Game {
 
     this.controller = new PossessionController(this.camera, this.renderer.domElement);
     this.controller.onCommitMove = (move) => this.playMove(move);
+    this.setupMenu();
     this.setupOverlay();
 
     this.addLights();
@@ -110,11 +119,6 @@ export class Game {
     this.hint = document.getElementById('hint');
     this.dwellRing = document.getElementById('dwell-ring');
 
-    // The game starts with the player inside the white king, facing black.
-    this.possess('e1', true);
-    const kingCenter = squareCenter(4, 0);
-    this.camera.lookAt(kingCenter.x, PIECE_EYE_HEIGHT.king, kingCenter.z + 8);
-
     window.addEventListener('resize', this.onResize);
     window.addEventListener('mousedown', this.onMouseDown);
   }
@@ -123,9 +127,44 @@ export class Game {
     this.renderer.setAnimationLoop(this.tick);
   }
 
+  /** Begin a game in the chosen mode. The player starts inside their king. */
+  startGame(mode: GameMode, playerColor: PieceColor): void {
+    this.mode = mode;
+    this.playerColor = mode === 'cpu' ? playerColor : 'white';
+
+    const kingCoord = this.playerColor === 'white' ? 'e1' : 'e8';
+    this.possess(kingCoord, true);
+
+    // Face the opponent's side of the board.
+    const king = coordToSquare(kingCoord);
+    const center = squareCenter(king.file, king.rank);
+    const forward = this.playerColor === 'white' ? 8 : -8;
+    this.camera.lookAt(center.x, PIECE_EYE_HEIGHT.king, center.z + forward);
+
+    this.controller.lock();
+
+    if (this.cpuColor === this.engine.turn) {
+      this.scheduleCpuMove();
+    }
+  }
+
+  /** The color the CPU plays, or null in free play. */
+  private get cpuColor(): PieceColor | null {
+    return this.mode === 'cpu' ? oppositeColor(this.playerColor) : null;
+  }
+
+  /** Which color's pieces the player may possess right now. */
+  private get controlledColor(): PieceColor {
+    return this.mode === 'cpu' ? this.playerColor : this.engine.turn;
+  }
+
   private tick = (): void => {
     const delta = Math.min(this.clock.getDelta(), 0.1);
     this.controller.update(delta);
+    this.chessSet.setCrowd(
+      this.controller.isTransitioning ? null : this.camera.position,
+      this.possessedCoord,
+    );
     this.chessSet.update(delta);
     this.syncPossessed();
     this.updateHoverIndicator();
@@ -151,7 +190,6 @@ export class Game {
   private refreshMoveState(): void {
     const square = coordToSquare(this.possessedCoord);
     this.possessedMoves = this.engine.legalMovesFrom(square);
-    this.sanCache = null;
 
     const corridors = buildCorridors(this.possessedMoves);
     if (this.possessedMoves.length > 0) {
@@ -213,10 +251,7 @@ export class Game {
     let text = squareCoord(square.file, square.rank);
     const move = this.possessedMoves.find((candidate) => sameSquare(candidate.to, square));
     if (move) {
-      if (this.sanCache?.move !== move) {
-        this.sanCache = { move, san: moveToSan(this.engine, move) };
-      }
-      text = this.sanCache.san;
+      text = move.san;
     }
 
     const { x, z } = squareCenter(square.file, square.rank);
@@ -244,7 +279,7 @@ export class Game {
 
     const piece = this.engine.pieceAt(square);
     const coord = squareCoord(square.file, square.rank);
-    if (piece && piece.color === this.engine.turn && coord !== this.possessedCoord) {
+    if (piece && piece.color === this.controlledColor && coord !== this.possessedCoord) {
       this.possess(coord, false);
     }
   };
@@ -254,13 +289,51 @@ export class Game {
     this.chessSet.applyMove(move);
     this.possessedCoord = squareCoord(move.to.file, move.to.rank);
     this.refreshMoveState();
+
+    if (!this.gameOver && this.cpuColor === this.engine.turn) {
+      this.scheduleCpuMove();
+    }
+  }
+
+  private scheduleCpuMove(): void {
+    if (this.cpuMoveTimer !== null) return;
+    this.cpuMoveTimer = window.setTimeout(() => {
+      this.cpuMoveTimer = null;
+      this.playCpuMove();
+    }, CPU_MOVE_DELAY_MS);
+  }
+
+  /** Placeholder "AI": plays a uniformly random legal move. */
+  private playCpuMove(): void {
+    if (this.gameOver || this.engine.turn !== this.cpuColor) return;
+
+    const moves = this.engine.allLegalMoves();
+    if (moves.length === 0) return;
+    const move = moves[Math.floor(Math.random() * moves.length)];
+    this.engine.makeMove(move);
+
+    // The CPU captured the piece we inhabit: leap into our king first, so the
+    // controller releases the victim's mesh before it flies off the board.
+    const capturedCoord = move.capturedSquare
+      ? squareCoord(move.capturedSquare.file, move.capturedSquare.rank)
+      : null;
+    if (capturedCoord === this.possessedCoord) {
+      const king = this.engine.kingSquare(this.playerColor);
+      this.possess(squareCoord(king.file, king.rank), false);
+      this.chessSet.applyMove(move);
+    } else {
+      this.chessSet.applyMove(move);
+      this.refreshMoveState();
+    }
   }
 
   private updateHud(): void {
     if (!this.hud) return;
 
-    const toMove = capitalize(this.engine.turn);
-    const winner = capitalize(oppositeColor(this.engine.turn));
+    const cpuTag = (color: PieceColor) => (color === this.cpuColor ? ' (CPU)' : '');
+    const toMove = capitalize(this.engine.turn) + cpuTag(this.engine.turn);
+    const winner =
+      capitalize(oppositeColor(this.engine.turn)) + cpuTag(oppositeColor(this.engine.turn));
 
     switch (this.engine.getStatus()) {
       case 'playing':
@@ -275,6 +348,10 @@ export class Game {
         break;
       case 'stalemate':
         this.hud.textContent = 'Stalemate \u2014 draw';
+        this.gameOver = true;
+        break;
+      case 'draw':
+        this.hud.textContent = 'Draw \u2014 by repetition, fifty-move rule or insufficient material';
         this.gameOver = true;
         break;
     }
@@ -296,6 +373,11 @@ export class Game {
 
     if (this.gameOver) {
       this.hint.textContent = 'Game over \u2014 reload to play again';
+      return;
+    }
+
+    if (this.cpuColor === this.engine.turn) {
+      this.hint.textContent = 'CPU is thinking\u2026';
       return;
     }
 
@@ -376,6 +458,22 @@ export class Game {
     ground.position.y = GROUND_Y;
     ground.receiveShadow = true;
     this.scene.add(ground);
+  }
+
+  private setupMenu(): void {
+    const menu = document.getElementById('menu');
+    const begin = (mode: GameMode, color: PieceColor) => {
+      menu?.classList.add('hidden');
+      this.startGame(mode, color);
+    };
+
+    document.getElementById('mode-free')?.addEventListener('click', () => begin('free', 'white'));
+    document
+      .getElementById('mode-cpu-white')
+      ?.addEventListener('click', () => begin('cpu', 'white'));
+    document
+      .getElementById('mode-cpu-black')
+      ?.addEventListener('click', () => begin('cpu', 'black'));
   }
 
   private setupOverlay(): void {
