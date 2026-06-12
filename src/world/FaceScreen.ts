@@ -88,6 +88,9 @@ export class FaceScreen {
   private stream: MediaStream | null = null;
   private videoTrack: MediaStreamTrack | null = null;
   private readonly onVideoStateChange = (): void => this.applyVideoState();
+  private readonly tmpDir = new THREE.Vector3();
+  private readonly tmpAnchor = new THREE.Vector3();
+  private readonly planeForward = new THREE.Vector3(0, 0, 1);
 
   constructor() {
     this.object.name = 'face-screen';
@@ -171,15 +174,20 @@ export class FaceScreen {
     yaw: number,
     pitch: number,
   ): void {
-    const orbit = Math.cos(pitch) * FORWARD_OFFSET;
-    this.object.position.set(
-      piecePosition.x + Math.sin(yaw) * orbit,
-      piecePosition.y + eyeHeight * eyeScale + LIFT + Math.sin(pitch) * FORWARD_OFFSET,
-      piecePosition.z + Math.cos(yaw) * orbit,
+    // Rebuild the gaze vector from yaw/pitch — applying pitch as rotation.x
+    // after yaw does not reproduce the camera's look direction (yaw-only works).
+    this.tmpDir.set(
+      Math.sin(yaw) * Math.cos(pitch),
+      Math.sin(pitch),
+      Math.cos(yaw) * Math.cos(pitch),
     );
-    this.object.rotation.order = 'YXZ';
-    this.object.rotation.y = yaw;
-    this.object.rotation.x = pitch;
+    this.tmpAnchor.set(
+      piecePosition.x,
+      piecePosition.y + eyeHeight * eyeScale + LIFT,
+      piecePosition.z,
+    );
+    this.object.position.copy(this.tmpAnchor).addScaledVector(this.tmpDir, FORWARD_OFFSET);
+    this.object.quaternion.setFromUnitVectors(this.planeForward, this.tmpDir);
   }
 
   setVisible(visible: boolean): void {
