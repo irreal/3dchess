@@ -204,6 +204,19 @@ function fullRoom(): { room: GameRoom; white: string; black: string } {
   assertEqual(sanitizePresence({ possessed: 'e4', pitch: 3 }), null, 'out-of-range pitch rejected');
   assertEqual(sanitizePresence({ possessed: 'e4', pitch: NaN }), null, 'NaN pitch rejected');
   assertEqual(sanitizePresence({ possessed: 'e4', pitch: '1' }), null, 'non-numeric pitch rejected');
+
+  // Camera on/off for the face screen placeholder.
+  assertEqual(
+    JSON.stringify(sanitizePresence({ possessed: 'e4', camera: true })),
+    '{"possessed":"e4","camera":true}',
+    'camera:true passes through',
+  );
+  assertEqual(
+    JSON.stringify(sanitizePresence({ possessed: 'e4', camera: false })),
+    '{"possessed":"e4","camera":false}',
+    'camera:false passes through',
+  );
+  assertEqual(sanitizePresence({ possessed: 'e4', camera: 'yes' }), null, 'non-bool camera rejected');
 }
 
 // --- Expiry sweep ---

@@ -189,6 +189,7 @@ export class Game {
     jumps: 0,
     yaw: 0,
     pitch: 0,
+    camera: false,
   };
 
   /** Incoming presence: the friend's piece walking live, dead-reckoned. */
@@ -208,6 +209,10 @@ export class Game {
   private localCameraStream: MediaStream | null = null;
   private localMicStream: MediaStream | null = null;
   private readonly faceScreen = new FaceScreen();
+  /** P2P media from the friend (audio and/or video tracks). */
+  private remoteMediaStream: MediaStream | null = null;
+  /** Friend's camera toggle; WebRTC mute alone is unreliable for this. */
+  private remoteCameraOn: boolean | null = null;
   /** Plays the friend's voice; detached elements play audio just fine. */
   private readonly remoteAudio = document.createElement('audio');
   /** Friend's look direction: latest reported and smoothed display values. */
@@ -705,10 +710,19 @@ export class Game {
    * costs nothing; volatile, so nothing is queued while offline.
    */
   private maybeSendPresence(): void {
+    this.sendPresence(false);
+  }
+
+  /** Push presence immediately (e.g. camera toggle) without waiting for deltas. */
+  private sendPresenceNow(): void {
+    this.sendPresence(true);
+  }
+
+  private sendPresence(force: boolean): void {
     if (this.mode !== 'online' || !this.inGame || !this.online || this.gameOver) return;
 
     const now = performance.now();
-    if (now - this.lastPresenceSentAt < PRESENCE_INTERVAL_MS) return;
+    if (!force && now - this.lastPresenceSentAt < PRESENCE_INTERVAL_MS) return;
 
     const group = this.chessSet.getPiece(this.possessedCoord);
     if (!group) return;
@@ -720,6 +734,7 @@ export class Game {
 
     const duck = this.localAntics.isDucking;
     const jumps = this.localAntics.jumpCount;
+    const camera = Boolean(this.localCameraStream);
     const { yaw, pitch } = this.cameraLook();
 
     const last = this.lastSentPresence;
@@ -727,11 +742,13 @@ export class Game {
     const turned = Math.abs(angleDelta(yaw, last.yaw)) > PRESENCE_MIN_YAW_DELTA;
     const tilted = Math.abs(pitch - last.pitch) > PRESENCE_MIN_PITCH_DELTA;
     if (
+      !force &&
       this.possessedCoord === last.coord &&
       walking === last.walking &&
       (!walking || !moved) &&
       duck === last.duck &&
       jumps === last.jumps &&
+      camera === last.camera &&
       !turned &&
       !tilted
     ) {
@@ -751,12 +768,13 @@ export class Game {
           jumps: jumps || undefined,
           yaw: Math.round(yaw * 100) / 100,
           pitch: Math.round(pitch * 100) / 100,
+          camera,
         },
       },
       true,
     );
     this.lastPresenceSentAt = now;
-    this.lastSentPresence = { coord: this.possessedCoord, x, z, walking, duck, jumps, yaw, pitch };
+    this.lastSentPresence = { coord: this.possessedCoord, x, z, walking, duck, jumps, yaw, pitch, camera };
   }
 
   /** Our look direction as yaw (board plane) and pitch (up/down). */
@@ -794,6 +812,10 @@ export class Game {
     this.remoteAntics.setDuck(presence.duck === true);
     if (typeof presence.yaw === 'number') this.remoteYaw = presence.yaw;
     if (typeof presence.pitch === 'number') this.remotePitch = presence.pitch;
+    if (typeof presence.camera === 'boolean') {
+      this.remoteCameraOn = presence.camera;
+      this.syncFaceScreenVideo();
+    }
     const jumps = presence.jumps ?? 0;
     if (this.remoteJumpsSeen === null || jumps < this.remoteJumpsSeen) {
       this.remoteJumpsSeen = jumps;
@@ -919,7 +941,9 @@ export class Game {
         const video = stream?.getVideoTracks().filter((t) => t.readyState === 'live' && !t.muted).length ?? 0;
         const audio = stream?.getAudioTracks().length ?? 0;
         console.info(`[rtc] remote media now: ${video} live video, ${audio} audio track(s)`);
-        this.faceScreen.setStream(stream && video > 0 ? stream : null);
+        this.remoteMediaStream = stream;
+        this.faceScreen.setStream(stream);
+        this.syncFaceScreenVideo();
         this.remoteAudio.srcObject = stream;
         if (stream && audio > 0) {
           void this.remoteAudio
@@ -931,11 +955,20 @@ export class Game {
     return this.videoCall;
   }
 
+  private syncFaceScreenVideo(): void {
+    const hasLiveVideo =
+      this.remoteMediaStream?.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted) ??
+      false;
+    const cameraOn = this.remoteCameraOn ?? hasLiveVideo;
+    this.faceScreen.setCameraEnabled(cameraOn);
+  }
+
   private async toggleCamera(): Promise<void> {
     if (this.localCameraStream) {
       for (const track of this.localCameraStream.getTracks()) track.stop();
       this.localCameraStream = null;
       this.syncOutgoingTracks();
+      this.sendPresenceNow();
       this.updateMediaUi();
       return;
     }
@@ -953,6 +986,7 @@ export class Game {
     console.info('[rtc] camera enabled');
     this.localCameraStream = stream;
     this.syncOutgoingTracks();
+    this.sendPresenceNow();
     this.updateMediaUi();
   }
 
@@ -1018,7 +1052,9 @@ export class Game {
 
     this.videoCall?.close();
     this.videoCall = null;
+    this.remoteMediaStream = null;
     this.faceScreen.setStream(null);
+    this.faceScreen.setCameraEnabled(false);
     this.remoteAudio.srcObject = null;
 
     // With local media on, recreating the call kicks off a fresh negotiation;
@@ -1107,6 +1143,7 @@ export class Game {
       this.remoteYawSmoothed,
       this.remotePitchSmoothed,
     );
+    this.faceScreen.refreshVideoState();
     this.faceScreen.setVisible(true);
   }
 

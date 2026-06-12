@@ -87,6 +87,7 @@ export class FaceScreen {
   private texture: THREE.VideoTexture | null = null;
   private stream: MediaStream | null = null;
   private videoTrack: MediaStreamTrack | null = null;
+  private cameraEnabled = false;
   private readonly onVideoStateChange = (): void => this.applyVideoState();
   private readonly tmpDir = new THREE.Vector3();
   private readonly tmpAnchor = new THREE.Vector3();
@@ -118,8 +119,15 @@ export class FaceScreen {
     this.video.autoplay = true;
   }
 
+  /** Whether the friend has their camera on (from presence; WebRTC mute is a backup). */
+  setCameraEnabled(enabled: boolean): void {
+    if (this.cameraEnabled === enabled) return;
+    this.cameraEnabled = enabled;
+    this.applyVideoState();
+  }
+
   setStream(stream: MediaStream | null): void {
-    if (stream === this.stream && stream !== null) return;
+    if (stream === this.stream) return;
     this.clearVideoTrackListeners();
     this.stream = stream;
     this.videoTrack = stream?.getVideoTracks()[0] ?? null;
@@ -131,6 +139,16 @@ export class FaceScreen {
     this.applyVideoState();
   }
 
+  /** Re-check track liveness each frame; catches mute events WebRTC never fires. */
+  refreshVideoState(): void {
+    if (!this.cameraEnabled || !this.texture) return;
+    const trackLive =
+      this.videoTrack !== null &&
+      this.videoTrack.readyState === 'live' &&
+      !this.videoTrack.muted;
+    if (!trackLive) this.applyVideoState();
+  }
+
   private clearVideoTrackListeners(): void {
     if (!this.videoTrack) return;
     this.videoTrack.removeEventListener('mute', this.onVideoStateChange);
@@ -140,13 +158,13 @@ export class FaceScreen {
   }
 
   private applyVideoState(): void {
-    const live =
-      this.stream !== null &&
+    const trackLive =
       this.videoTrack !== null &&
       this.videoTrack.readyState === 'live' &&
       !this.videoTrack.muted;
+    const showVideo = this.cameraEnabled && this.stream !== null && trackLive;
 
-    if (live) {
+    if (showVideo) {
       if (this.texture) return;
       this.video.srcObject = this.stream;
       void this.video.play().catch(() => {});
@@ -157,6 +175,7 @@ export class FaceScreen {
       this.texture?.dispose();
       this.texture = null;
       this.video.srcObject = null;
+      this.video.load();
       this.screenMaterial.map = this.placeholder;
     }
     this.screenMaterial.needsUpdate = true;

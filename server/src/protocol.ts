@@ -41,6 +41,8 @@ export interface PresencePayload {
   yaw?: number;
   /** Camera look pitch (radians), so the face screen tilts with the gaze. */
   pitch?: number;
+  /** Webcam is on; false when the friend turned their camera off. */
+  camera?: boolean;
 }
 
 /**
