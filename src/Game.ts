@@ -560,7 +560,11 @@ export class Game {
     this.tryPossessAtCrosshair();
   };
 
-  /** Leap into the friendly piece under the crosshair, if any. */
+  /**
+   * Leap into the friendly piece under the crosshair, or — when aiming at a
+   * legal destination of the possessed piece — auto-walk the rails there and
+   * commit the move.
+   */
   private tryPossessAtCrosshair(): void {
     if (!this.controller.isActive || this.gameOver) return;
 
@@ -571,7 +575,14 @@ export class Game {
     const coord = squareCoord(square.file, square.rank);
     if (piece && piece.color === this.controlledColor && coord !== this.possessedCoord) {
       this.possess(coord, false);
+      return;
     }
+
+    const candidates = this.possessedMoves.filter((move) => sameSquare(move.to, square));
+    if (candidates.length === 0) return;
+    // Several moves can land on the same square only via promotion: take the queen.
+    const move = candidates.find((m) => m.promotion === 'queen') ?? candidates[0];
+    this.controller.glideToMove(move);
   }
 
   private playMove(move: Move): void {

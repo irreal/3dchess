@@ -72,6 +72,8 @@ export class PossessionController {
   private dwell = 0;
   private returning = false;
   private wantCommit = false;
+  /** Click-to-move: auto-walk the rails to this rest point, then commit. */
+  private autoTarget: { corridor: Corridor; rest: RestPoint } | null = null;
   private eyeHeight = 1.7;
   private readonly basePos = new THREE.Vector3();
 
@@ -268,7 +270,27 @@ export class PossessionController {
 
   /** Glide back to the origin square, abandoning the move in progress. */
   cancelGlide(): void {
+    this.autoTarget = null;
     if (this.active) this.returning = true;
+  }
+
+  /**
+   * Auto-walk along the rails to the given legal move's landing square and
+   * commit on arrival (click-to-move). Returns false when the move is not on
+   * any current corridor. Manual movement input cancels the auto-walk.
+   */
+  glideToMove(move: Move): boolean {
+    if (!this.possessed || this.transition || this.freeRoam) return false;
+    for (const corridor of this.corridors) {
+      const rest = corridor.restPoints.find((candidate) => candidate.move === move);
+      if (rest) {
+        this.autoTarget = { corridor, rest };
+        this.returning = false;
+        this.dwell = 0;
+        return true;
+      }
+    }
+    return false;
   }
 
   update(delta: number): void {
@@ -288,9 +310,10 @@ export class PossessionController {
 
     if (this.isActive) {
       if (this.lookX !== 0 || this.lookY !== 0) {
+        // Stick up (positive lookY) should pitch the camera up.
         this.rotateLook(
           this.lookX * PossessionController.LOOK_TURN_RATE * delta,
-          this.lookY * PossessionController.LOOK_TURN_RATE * delta,
+          -this.lookY * PossessionController.LOOK_TURN_RATE * delta,
         );
       }
       if (this.freeRoam) {
@@ -337,6 +360,15 @@ export class PossessionController {
 
   private updateTraversal(delta: number): void {
     const desired = this.desiredDirection();
+
+    // The player taking the stick/keys back (or retreating) overrides the
+    // click-to-move auto-walk.
+    if (this.autoTarget && (desired || this.returning)) this.autoTarget = null;
+    if (this.autoTarget) {
+      this.updateAutoGlide(delta);
+      return;
+    }
+
     let moved = 0;
 
     if (this.returning && this.active) {
@@ -432,6 +464,31 @@ export class PossessionController {
     this.wantCommit = false;
   }
 
+  /** Advance toward the clicked square, retreating to the hub first if the
+   *  piece is partway down a different corridor. */
+  private updateAutoGlide(delta: number): void {
+    const target = this.autoTarget;
+    if (!target) return;
+    this.dwell = 0;
+    this.wantCommit = false;
+
+    if (this.active && this.active !== target.corridor) {
+      this.dist = Math.max(0, this.dist - RETURN_SPEED * delta);
+      if (this.dist === 0) this.active = null;
+      return;
+    }
+
+    this.active = target.corridor;
+    const remaining = target.rest.dist - this.dist;
+    const step = GLIDE_SPEED * delta;
+    if (Math.abs(remaining) <= step) {
+      this.autoTarget = null;
+      this.commit(target.corridor, target.rest);
+    } else {
+      this.dist += Math.sign(remaining) * step;
+    }
+  }
+
   private commit(corridor: Corridor, rest: RestPoint): void {
     positionAt(corridor, rest.dist, this.tmpPos);
     this.basePos.set(this.tmpPos.x, 0, this.tmpPos.z);
@@ -479,6 +536,7 @@ export class PossessionController {
     this.dwell = 0;
     this.returning = false;
     this.wantCommit = false;
+    this.autoTarget = null;
   }
 
   /** Camera-relative WASD / stick input projected onto the board plane, or null. */

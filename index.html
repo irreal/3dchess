@@ -21,6 +21,13 @@
         overflow: hidden;
         background: #000;
         font-family: system-ui, sans-serif;
+        /* Game-like touch behavior: no text selection, long-press callouts,
+           tap highlights or double-tap zoom. */
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
       }
 
       #app {
@@ -138,6 +145,9 @@
       }
 
       #invite-link {
+        /* The one place selecting text is useful: copying the invite link. */
+        user-select: text;
+        -webkit-user-select: text;
         width: min(60vw, 380px);
         padding: 10px 14px;
         border: 1px solid rgba(255, 255, 255, 0.25);
@@ -838,6 +848,7 @@
         Mouse — look &nbsp;·&nbsp; Click a friendly piece — jump into it<br />
         WASD — walk along a legal path &nbsp;·&nbsp; Rest on a square or press Enter — confirm the
         move<br />
+        Click a highlighted square — walk there and move<br />
         Right-click — retreat to your square &nbsp;·&nbsp; Esc — release cursor<br />
         Space — jump &nbsp;·&nbsp; Ctrl — duck (just for fun; your friend sees it live)<br />
         Camera / Mic buttons (top-right) — toggle video and voice during online play<br />
@@ -845,7 +856,7 @@
       </p>
       <p class="controls-help-mobile">
         Left joystick — walk &nbsp;·&nbsp; Right joystick — look &nbsp;·&nbsp; Tap the board — jump into a piece<br />
-        Rest on a square — confirm the move<br />
+        Rest on a square — confirm the move &nbsp;·&nbsp; Tap a highlighted square — move there<br />
         Jump / Duck — just for fun; your friend sees it live in online play<br />
         Camera / Mic buttons (top-left) — toggle video and voice in online play
       </p>
