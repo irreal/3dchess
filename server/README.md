@@ -89,3 +89,18 @@ fly deploy
 The machine auto-stops when no clients are connected; since games live in
 memory, an idle (no open sockets) game does not survive a stop. The client
 reads the server URL from `VITE_SERVER_URL` in the repo-root `.env`.
+
+## TURN (video/voice relay)
+
+`GET /api/ice` returns the ICE servers clients use for the face-to-face
+call. With the Cloudflare Realtime TURN secrets configured, it mints
+short-lived TURN credentials so calls connect even across symmetric NATs;
+without them (e.g. local dev) it returns public STUN only, which still works
+for most network pairs. Configure with:
+
+```sh
+fly secrets set TURN_KEY_ID=... TURN_API_TOKEN=...
+```
+
+The API token is only ever used server-side; clients receive ephemeral
+per-request credentials (24 h TTL, matching game expiry).

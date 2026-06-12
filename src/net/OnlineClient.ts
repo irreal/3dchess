@@ -21,6 +21,28 @@ export async function createOnlineGame(): Promise<OnlineSession> {
   return session;
 }
 
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+];
+
+/**
+ * ICE servers for the video call. The server mints short-lived Cloudflare
+ * TURN credentials when configured, so calls connect even across symmetric
+ * NATs; any failure degrades to public STUN (direct P2P only).
+ */
+export async function fetchIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const response = await fetch(`${SERVER_URL}/api/ice`);
+    const body = (await response.json()) as { iceServers?: RTCIceServer[] } | null;
+    if (response.ok && Array.isArray(body?.iceServers) && body.iceServers.length > 0) {
+      return body.iceServers;
+    }
+  } catch {
+    // Fall through to STUN.
+  }
+  return FALLBACK_ICE_SERVERS;
+}
+
 export async function joinOnlineGame(code: string): Promise<OnlineSession> {
   const stored = loadSession();
   if (stored && stored.code === code.toUpperCase()) return stored; // reclaim our seat

@@ -186,6 +186,16 @@ function fullRoom(): { room: GameRoom; white: string; black: string } {
   assertEqual(sanitizePresence({ possessed: 'e4', jumps: 1.5 }), null, 'fractional jumps rejected');
   assertEqual(sanitizePresence({ possessed: 'e4', jumps: -1 }), null, 'negative jumps rejected');
   assertEqual(sanitizePresence({ possessed: 'e4', jumps: 1e12 }), null, 'absurd jumps rejected');
+
+  // Look yaw for the face screen.
+  assertEqual(
+    JSON.stringify(sanitizePresence({ possessed: 'e4', yaw: -1.57 })),
+    '{"possessed":"e4","yaw":-1.57}',
+    'yaw passes through',
+  );
+  assertEqual(sanitizePresence({ possessed: 'e4', yaw: 9 }), null, 'out-of-range yaw rejected');
+  assertEqual(sanitizePresence({ possessed: 'e4', yaw: NaN }), null, 'NaN yaw rejected');
+  assertEqual(sanitizePresence({ possessed: 'e4', yaw: '1' }), null, 'non-numeric yaw rejected');
 }
 
 // --- Expiry sweep ---

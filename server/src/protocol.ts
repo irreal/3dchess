@@ -37,7 +37,16 @@ export interface PresencePayload {
   duck?: boolean;
   /** Cumulative take-off count; the receiver replays jumps it hasn't seen. */
   jumps?: number;
+  /** Camera look yaw (radians), so the face screen orbits with the gaze. */
+  yaw?: number;
 }
+
+/**
+ * WebRTC signaling payload (SDP descriptions and ICE candidates) for the
+ * face-to-face video feature. The server treats it as opaque and relays it
+ * to the opponent; the video itself flows peer-to-peer, never through here.
+ */
+export type RtcSignalPayload = Record<string, unknown>;
 
 /** A move after the server validated and applied it. */
 export interface AppliedMove extends MovePayload {
@@ -61,6 +70,7 @@ export interface GameSnapshot {
 export type ClientMessage =
   | { type: 'move'; move: MovePayload }
   | { type: 'presence'; presence: PresencePayload }
+  | { type: 'rtc'; payload: RtcSignalPayload }
   | { type: 'resign' };
 
 export type ServerMessage =
@@ -70,6 +80,8 @@ export type ServerMessage =
   | { type: 'move'; move: AppliedMove; state: GameSnapshot }
   /** The opponent's live possession/walk position (relayed, best-effort). */
   | { type: 'presence'; presence: PresencePayload }
+  /** WebRTC signaling from the opponent (relayed verbatim). */
+  | { type: 'rtc'; payload: RtcSignalPayload }
   /** The opponent's connection came up or went down. */
   | { type: 'opponent'; connected: boolean }
   | { type: 'error'; message: string };

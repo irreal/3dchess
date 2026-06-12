@@ -44,6 +44,18 @@ export interface PresencePayload {
   /** Cumulative take-off count — the receiver replays the jump physics
    * locally whenever this grows, so animations stay perfect at any rate. */
   jumps?: number;
+  /** Camera look yaw (radians), so the face screen orbits with the gaze. */
+  yaw?: number;
+}
+
+/**
+ * WebRTC signaling payload (an SDP description or an ICE candidate),
+ * relayed verbatim through the server. The video itself flows peer-to-peer.
+ */
+export interface RtcSignalPayload {
+  description?: RTCSessionDescriptionInit;
+  /** Null signals end-of-candidates. */
+  candidate?: RTCIceCandidateInit | null;
 }
 
 export interface AppliedMove extends MovePayload {
@@ -65,11 +77,13 @@ export interface GameSnapshot {
 export type ClientMessage =
   | { type: 'move'; move: MovePayload }
   | { type: 'presence'; presence: PresencePayload }
+  | { type: 'rtc'; payload: RtcSignalPayload }
   | { type: 'resign' };
 
 export type ServerMessage =
   | { type: 'state'; you: PieceColor; state: GameSnapshot }
   | { type: 'move'; move: AppliedMove; state: GameSnapshot }
   | { type: 'presence'; presence: PresencePayload }
+  | { type: 'rtc'; payload: RtcSignalPayload }
   | { type: 'opponent'; connected: boolean }
   | { type: 'error'; message: string };

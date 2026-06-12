@@ -11,7 +11,7 @@ The game starts on a menu with three modes: free play (the player controls both 
 - `src/Game.ts` — orchestrator: scene, render loop, input, HUD, menu/game modes, possession flow, CPU opponent
 - `src/chess/` — `ChessEngine`, a thin adapter over chess.js that emits the rich `Move` shape (capture squares, rook paths, SAN) the 3D layer consumes
 - `src/controls/` — `PossessionController` (look, piece-jumping, corridor traversal) and `corridors.ts` (legal-move rails)
-- `src/net/` — `OnlineClient` (HTTP lobby + WebSocket with reconnect/queue) and the client-side mirror of the server wire protocol; remote moves are replayed from SAN history via `ChessEngine.moveFromSan`
+- `src/net/` — `OnlineClient` (HTTP lobby + WebSocket with reconnect/queue), `VideoCall` (P2P WebRTC for the face-to-face camera feature, signaled through the server relay), and the client-side mirror of the server wire protocol; remote moves are replayed from SAN history via `ChessEngine.moveFromSan`
 - `src/world/` — board, piece meshes, move highlights, square indicator, enemy possession marker
 - `tests/engine.test.ts` — engine unit tests, run with `npx tsx tests/engine.test.ts`
 - `server/` — standalone multiplayer server (own npm package, Dockerized): authoritative game state via chess.js, HTTP API for creating/joining games by invite code, WebSocket play protocol. See `server/README.md`.

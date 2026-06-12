@@ -12,11 +12,12 @@ const MAX_COORD = 50;
  */
 export function sanitizePresence(raw: unknown): PresencePayload | null {
   if (typeof raw !== 'object' || raw === null) return null;
-  const { possessed, pos, duck, jumps } = raw as {
+  const { possessed, pos, duck, jumps, yaw } = raw as {
     possessed?: unknown;
     pos?: unknown;
     duck?: unknown;
     jumps?: unknown;
+    yaw?: unknown;
   };
 
   if (typeof possessed !== 'string' || !SQUARE_RE.test(possessed)) return null;
@@ -27,10 +28,15 @@ export function sanitizePresence(raw: unknown): PresencePayload | null {
   ) {
     return null;
   }
+  // Yaw is radians; anything within one wrap is fine.
+  if (yaw !== undefined && (typeof yaw !== 'number' || !Number.isFinite(yaw) || Math.abs(yaw) > 7)) {
+    return null;
+  }
 
   const clean: PresencePayload = { possessed };
   if (duck === true) clean.duck = true;
   if (typeof jumps === 'number' && jumps > 0) clean.jumps = jumps;
+  if (typeof yaw === 'number') clean.yaw = yaw;
 
   if (pos === undefined || pos === null) return clean;
 

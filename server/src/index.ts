@@ -15,6 +15,54 @@ const MAX_BODY_BYTES = 16 * 1024;
  */
 const PRESENCE_MIN_INTERVAL_MS = 40;
 
+/**
+ * WebRTC signaling relay limits. SDP offers run a few KB; trickle ICE sends
+ * a burst of small candidate messages, so a token bucket (instead of a flat
+ * interval) lets legitimate bursts through while capping sustained abuse.
+ */
+const MAX_RTC_FRAME_BYTES = 32 * 1024;
+const RTC_BUCKET_CAPACITY = 40;
+const RTC_BUCKET_REFILL_PER_S = 10;
+
+/**
+ * Cloudflare Realtime TURN: when the secrets are configured, /api/ice mints
+ * short-lived TURN credentials so clients behind symmetric NATs can still
+ * connect their calls. Without them (local dev), clients get STUN only.
+ */
+const TURN_KEY_ID = process.env.TURN_KEY_ID;
+const TURN_API_TOKEN = process.env.TURN_API_TOKEN;
+const ICE_TTL_SECONDS = 24 * 60 * 60; // matches the game expiry window
+const STUN_ONLY_ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+];
+
+async function mintIceServers(): Promise<unknown[]> {
+  if (!TURN_KEY_ID || !TURN_API_TOKEN) return STUN_ONLY_ICE_SERVERS;
+  try {
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${TURN_KEY_ID}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${TURN_API_TOKEN}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ ttl: ICE_TTL_SECONDS }),
+        signal: AbortSignal.timeout(5000),
+      },
+    );
+    if (!response.ok) throw new Error(`Cloudflare TURN responded ${response.status}`);
+    const body = (await response.json()) as { iceServers?: unknown };
+    const ice = body.iceServers;
+    if (Array.isArray(ice) && ice.length > 0) return ice;
+    if (ice && typeof ice === 'object') return [ice];
+    throw new Error('Cloudflare TURN returned no iceServers');
+  } catch (error) {
+    console.error('[ice] falling back to STUN only:', error);
+    return STUN_ONLY_ICE_SERVERS;
+  }
+}
+
 const manager = new GameManager();
 
 /** Live socket per seat; a newer connection for the same seat replaces the old one. */
@@ -36,6 +84,11 @@ const server = createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
       json(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/ice') {
+      json(res, 200, { iceServers: await mintIceServers() });
       return;
     }
 
@@ -156,11 +209,16 @@ function handleConnection(ws: WebSocket, room: GameRoom, color: Color): void {
   notifyOpponent(room, color, true);
 
   let lastPresenceRelayAt = 0;
+  let rtcTokens = RTC_BUCKET_CAPACITY;
+  let rtcRefillAt = Date.now();
 
   ws.on('message', (data) => {
+    const text = String(data);
+    if (text.length > MAX_RTC_FRAME_BYTES) return; // nothing legitimate is this big
+
     let message: ClientMessage;
     try {
-      message = JSON.parse(String(data));
+      message = JSON.parse(text);
     } catch {
       send(ws, { type: 'error', message: 'Malformed message' });
       return;
@@ -177,6 +235,25 @@ function handleConnection(ws: WebSocket, room: GameRoom, color: Color): void {
       lastPresenceRelayAt = now;
       const opponent = seat[color === 'white' ? 'black' : 'white'];
       if (opponent) send(opponent, { type: 'presence', presence });
+      return;
+    }
+
+    // WebRTC signaling: relayed opaque to the opponent so the two browsers
+    // can negotiate a peer-to-peer video connection. The video itself never
+    // touches this server.
+    if (message.type === 'rtc') {
+      const now = Date.now();
+      rtcTokens = Math.min(
+        RTC_BUCKET_CAPACITY,
+        rtcTokens + ((now - rtcRefillAt) / 1000) * RTC_BUCKET_REFILL_PER_S,
+      );
+      rtcRefillAt = now;
+      if (rtcTokens < 1) return;
+      const payload = message.payload;
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return;
+      rtcTokens -= 1;
+      const opponent = seat[color === 'white' ? 'black' : 'white'];
+      if (opponent) send(opponent, { type: 'rtc', payload });
       return;
     }
 

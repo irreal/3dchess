@@ -12,10 +12,13 @@ import { PossessionController } from './controls/PossessionController';
 import { buildCorridors } from './controls/corridors';
 import {
   createOnlineGame,
+  fetchIceServers,
   joinOnlineGame,
   OnlineClient,
   type OnlineSession,
 } from './net/OnlineClient';
+import { VideoCall } from './net/VideoCall';
+import { FaceScreen } from './world/FaceScreen';
 import {
   PROMOTION_SYMBOLS,
   type GameSnapshot,
@@ -77,6 +80,16 @@ const REMOTE_WALK_SETTLE_RADIUS = 0.02;
 
 /** No walk samples for this long (s) sends the remote piece back home. */
 const REMOTE_WALK_TIMEOUT_S = 5;
+
+/** Look yaw is re-sent only after turning this far (rad). */
+const PRESENCE_MIN_YAW_DELTA = 0.03;
+/** Smoothing rate for the friend's face screen orbiting to their yaw. */
+const REMOTE_YAW_SMOOTH_RATE = 10;
+
+/** Shortest-path difference between two angles (rad), in [-π, π]. */
+function angleDelta(a: number, b: number): number {
+  return ((a - b + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+}
 
 /** The opponent's live walk preview of a piece on a square. */
 interface RemoteWalk {
@@ -157,7 +170,15 @@ export class Game {
 
   /** Outgoing presence stream state (online play). */
   private lastPresenceSentAt = 0;
-  private lastSentPresence = { coord: '', x: 0, z: 0, walking: false, duck: false, jumps: 0 };
+  private lastSentPresence = {
+    coord: '',
+    x: 0,
+    z: 0,
+    walking: false,
+    duck: false,
+    jumps: 0,
+    yaw: 0,
+  };
 
   /** Incoming presence: the friend's piece walking live, dead-reckoned. */
   private remoteWalk: RemoteWalk | null = null;
@@ -168,6 +189,20 @@ export class Game {
   private readonly remoteAntics = new PieceAntics();
   /** Friend's cumulative jump count we already replayed (null = no baseline). */
   private remoteJumpsSeen: number | null = null;
+
+  /** Face-to-face A/V: P2P call, our camera/mic, and the friend's 3D screen. */
+  private videoCall: VideoCall | null = null;
+  /** ICE config (Cloudflare TURN via the server, or STUN fallback), memoized. */
+  private iceServersPromise: Promise<RTCIceServer[]> | null = null;
+  private localCameraStream: MediaStream | null = null;
+  private localMicStream: MediaStream | null = null;
+  private readonly faceScreen = new FaceScreen();
+  /** Plays the friend's voice; detached elements play audio just fine. */
+  private readonly remoteAudio = document.createElement('audio');
+  /** Friend's look yaw: latest reported and the smoothed display value. */
+  private remoteYaw: number | null = null;
+  private remoteYawSmoothed: number | null = null;
+  private readonly tmpLookDir = new THREE.Vector3();
   private readonly enemyPointer: HTMLElement | null;
   private readonly enemyPointerGlyph: HTMLElement | null;
   private readonly tmpProjected = new THREE.Vector3();
@@ -212,6 +247,21 @@ export class Game {
     this.scene.add(this.moveHighlights.object);
 
     this.scene.add(this.enemyMarker.object);
+    this.scene.add(this.faceScreen.object);
+
+    window.addEventListener('keydown', (event) => {
+      if (event.repeat || !this.onlineSession) return;
+      if (event.code === 'KeyV') void this.toggleCamera();
+      if (event.code === 'KeyM') void this.toggleMicrophone();
+    });
+
+    this.remoteAudio.autoplay = true;
+    // If autoplay was blocked (no prior interaction), any click unblocks it.
+    window.addEventListener('pointerdown', () => {
+      if (this.remoteAudio.srcObject && this.remoteAudio.paused) {
+        void this.remoteAudio.play().catch(() => {});
+      }
+    });
 
     this.hud = document.getElementById('hud');
     this.enemyPointer = document.getElementById('enemy-pointer');
@@ -300,6 +350,7 @@ export class Game {
     // The friend's antics run after ChessSet so the crowd system's home
     // snapping doesn't stomp their jump height.
     this.remoteAntics.update(delta);
+    this.updateFaceScreen(delta);
     this.maybeSendPresence();
     this.syncPossessed();
     this.syncEnemyMarker();
@@ -563,6 +614,10 @@ export class Game {
       case 'presence':
         this.handlePresence(message.presence);
         break;
+      case 'rtc':
+        // Awaiting the same memoized call promise keeps signal order intact.
+        void this.ensureVideoCall().then((call) => call?.handleSignal(message.payload));
+        break;
       case 'opponent':
         this.opponentPresent = message.connected;
         if (this.inGame) this.updateHint();
@@ -618,15 +673,18 @@ export class Game {
 
     const duck = this.localAntics.isDucking;
     const jumps = this.localAntics.jumpCount;
+    const yaw = this.cameraYaw();
 
     const last = this.lastSentPresence;
     const moved = Math.hypot(x - last.x, z - last.z) > PRESENCE_MIN_DELTA;
+    const turned = Math.abs(angleDelta(yaw, last.yaw)) > PRESENCE_MIN_YAW_DELTA;
     if (
       this.possessedCoord === last.coord &&
       walking === last.walking &&
       (!walking || !moved) &&
       duck === last.duck &&
-      jumps === last.jumps
+      jumps === last.jumps &&
+      !turned
     ) {
       return; // nothing the friend doesn't already know
     }
@@ -642,12 +700,19 @@ export class Game {
             : undefined,
           duck: duck || undefined,
           jumps: jumps || undefined,
+          yaw: Math.round(yaw * 100) / 100,
         },
       },
       true,
     );
     this.lastPresenceSentAt = now;
-    this.lastSentPresence = { coord: this.possessedCoord, x, z, walking, duck, jumps };
+    this.lastSentPresence = { coord: this.possessedCoord, x, z, walking, duck, jumps, yaw };
+  }
+
+  /** Our look direction projected to a yaw angle on the board plane. */
+  private cameraYaw(): number {
+    this.camera.getWorldDirection(this.tmpLookDir);
+    return Math.atan2(this.tmpLookDir.x, this.tmpLookDir.z);
   }
 
   // --- Live presence: playing the friend's movements back ------------------
@@ -673,6 +738,7 @@ export class Game {
     // value means the friend's client restarted — rebaseline without jumping.
     this.remoteAntics.attach(this.chessSet.getPiece(presence.possessed) ?? null);
     this.remoteAntics.setDuck(presence.duck === true);
+    if (typeof presence.yaw === 'number') this.remoteYaw = presence.yaw;
     const jumps = presence.jumps ?? 0;
     if (this.remoteJumpsSeen === null || jumps < this.remoteJumpsSeen) {
       this.remoteJumpsSeen = jumps;
@@ -770,6 +836,153 @@ export class Game {
     if (!this.remoteWalk) return;
     this.remoteWalk = null;
     this.chessSet.setRemoteWalkExclude(null);
+  }
+
+  // --- Face-to-face video -------------------------------------------------
+
+  /**
+   * The P2P call is created lazily: when we enable our camera/mic, or when
+   * the friend's first signaling message arrives (they enabled theirs).
+   * Creation awaits the ICE config (TURN credentials minted by the server);
+   * polite/impolite negotiation roles derive from seat colors.
+   */
+  private async ensureVideoCall(): Promise<VideoCall | null> {
+    if (!this.online || !this.onlineSession) return null;
+    if (!this.videoCall) {
+      const iceServers = await (this.iceServersPromise ??= fetchIceServers());
+      // Re-check: another caller may have built the call while we awaited,
+      // or the online session may have been torn down.
+      if (!this.online || !this.onlineSession) return null;
+      if (this.videoCall) return this.videoCall;
+
+      this.videoCall = new VideoCall(this.onlineSession.color === 'black', iceServers, (payload) =>
+        this.online?.send({ type: 'rtc', payload }),
+      );
+      // Route by kind: camera frames go to the 3D face screen, voice to a
+      // plain audio element. Either can exist without the other.
+      this.videoCall.onRemoteMedia = (stream) => {
+        this.faceScreen.setStream(stream && stream.getVideoTracks().length > 0 ? stream : null);
+        this.remoteAudio.srcObject = stream;
+        if (stream && stream.getAudioTracks().length > 0) {
+          void this.remoteAudio.play().catch(() => {});
+        }
+      };
+    }
+    return this.videoCall;
+  }
+
+  private async toggleCamera(): Promise<void> {
+    if (this.localCameraStream) {
+      for (const track of this.localCameraStream.getTracks()) track.stop();
+      this.localCameraStream = null;
+      this.syncOutgoingTracks();
+      this.updateMediaUi();
+      return;
+    }
+
+    // A modest feed: plenty for a face on a 0.84 m screen, cheap to encode.
+    const stream = await this.requestMedia('camera', {
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
+    });
+    if (!stream) return;
+    this.localCameraStream = stream;
+    this.syncOutgoingTracks();
+    this.updateMediaUi();
+  }
+
+  private async toggleMicrophone(): Promise<void> {
+    if (this.localMicStream) {
+      for (const track of this.localMicStream.getTracks()) track.stop();
+      this.localMicStream = null;
+      this.syncOutgoingTracks();
+      this.updateMediaUi();
+      return;
+    }
+
+    const stream = await this.requestMedia('microphone', {
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    if (!stream) return;
+    this.localMicStream = stream;
+    this.syncOutgoingTracks();
+    this.updateMediaUi();
+  }
+
+  private async requestMedia(
+    label: 'camera' | 'microphone',
+    constraints: MediaStreamConstraints,
+  ): Promise<MediaStream | null> {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Media devices need a secure (HTTPS) origin');
+      }
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.name === 'NotAllowedError'
+          ? `${capitalize(label)} permission denied`
+          : `Could not start the ${label}`;
+      const status = document.getElementById('online-status');
+      if (status && !this.inGame) status.textContent = message;
+      if (this.hint && this.inGame) this.hint.textContent = message;
+      return null;
+    }
+  }
+
+  /** Send whatever is currently enabled: camera frames, voice, both, or none. */
+  private syncOutgoingTracks(): void {
+    const tracks = [
+      ...(this.localCameraStream?.getVideoTracks() ?? []),
+      ...(this.localMicStream?.getAudioTracks() ?? []),
+    ];
+    if (tracks.length === 0 && !this.videoCall) return; // nothing to tear down
+    void this.ensureVideoCall().then((call) => call?.setLocalTracks(tracks));
+  }
+
+  /** Mirror our own feed in the corner and keep the lobby buttons labeled. */
+  private updateMediaUi(): void {
+    const video = document.getElementById('self-view') as HTMLVideoElement | null;
+    if (video) {
+      video.srcObject = this.localCameraStream;
+      video.classList.toggle('hidden', !this.localCameraStream);
+      if (this.localCameraStream) void video.play().catch(() => {});
+    }
+    const cameraButton = document.getElementById('camera-toggle');
+    if (cameraButton) {
+      cameraButton.textContent = this.localCameraStream ? 'Turn camera off' : 'Enable camera';
+    }
+    const micButton = document.getElementById('mic-toggle');
+    if (micButton) {
+      micButton.textContent = this.localMicStream ? 'Mute mic' : 'Enable mic';
+    }
+  }
+
+  /**
+   * Keep the friend's face screen parked in front of their possessed piece,
+   * orbited to their (smoothed) look yaw — when the face points at you, they
+   * are actually looking at you in their game. Shown for every online game:
+   * without video the screen falls back to a cartoon face.
+   */
+  private updateFaceScreen(delta: number): void {
+    if (!this.onlineSession || !this.enemyPossessedCoord) {
+      this.faceScreen.setVisible(false);
+      return;
+    }
+    const group = this.chessSet.getPiece(this.enemyPossessedCoord);
+    const piece = this.engine.pieceAt(coordToSquare(this.enemyPossessedCoord));
+    if (!group || !piece) {
+      this.faceScreen.setVisible(false);
+      return;
+    }
+
+    // Default to facing across the board until the first yaw sample arrives.
+    const target = this.remoteYaw ?? (this.opponentColor === 'white' ? 0 : Math.PI);
+    const current = this.remoteYawSmoothed ?? target;
+    this.remoteYawSmoothed =
+      current + angleDelta(target, current) * Math.min(1, REMOTE_YAW_SMOOTH_RATE * delta);
+
+    this.faceScreen.updatePose(group.position, PIECE_EYE_HEIGHT[piece.type], this.remoteYawSmoothed);
+    this.faceScreen.setVisible(true);
   }
 
   /**
@@ -1066,6 +1279,14 @@ export class Game {
       if (this.onlineSession) begin('online', this.onlineSession.color);
     });
 
+    document
+      .getElementById('camera-toggle')
+      ?.addEventListener('click', () => void this.toggleCamera());
+
+    document
+      .getElementById('mic-toggle')
+      ?.addEventListener('click', () => void this.toggleMicrophone());
+
     document.getElementById('copy-link')?.addEventListener('click', (event) => {
       const input = document.getElementById('invite-link') as HTMLInputElement | null;
       const button = event.currentTarget as HTMLButtonElement;
@@ -1114,6 +1335,15 @@ export class Game {
       if (this.inGame) this.updateHint();
     };
     this.online.connect();
+
+    // Warm up the ICE config (TURN credentials) so the first call attempt
+    // doesn't wait on a round-trip to the server.
+    this.iceServersPromise ??= fetchIceServers();
+
+    // Camera/mic enabled while the game was still being created: attach now.
+    if (this.localCameraStream || this.localMicStream) {
+      this.syncOutgoingTracks();
+    }
 
     const inviteLink = document.getElementById('invite-link') as HTMLInputElement | null;
     if (inviteLink) {
