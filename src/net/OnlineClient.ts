@@ -9,10 +9,11 @@ const SERVER_URL: string = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:
  * in a fresh tab — reclaims the same seat instead of hitting "Game is full".
  * (To test both seats from one machine, use an incognito/second profile
  * window for the other player.) The in-game flag stays per-tab: it only
- * decides whether a reload of *this tab* warps straight back onto the board.
+ * decides whether a reload of *this tab* offers to rejoin the game directly.
  */
 const SESSION_KEY = '3dchess-online-session';
 const IN_GAME_KEY = '3dchess-online-in-game';
+const POSSESSED_KEY = '3dchess-online-possessed';
 
 /** HTTP failure from the game server, carrying the status code for triage. */
 export class ServerError extends Error {
@@ -87,8 +88,31 @@ export function syncGameUrl(code: string): void {
 
 export function clearStoredOnlineSession(): void {
   localStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(POSSESSED_KEY);
   sessionStorage.removeItem(SESSION_KEY); // pre-localStorage sessions
   sessionStorage.removeItem(IN_GAME_KEY);
+}
+
+/**
+ * Remember which piece (square) the player occupies, keyed by game code so
+ * a leftover value from an older game can never leak into a new one.
+ */
+export function saveOnlinePossession(code: string, coord: string): void {
+  localStorage.setItem(POSSESSED_KEY, JSON.stringify({ code, coord }));
+}
+
+export function getStoredOnlinePossession(code: string): string | null {
+  try {
+    const raw = localStorage.getItem(POSSESSED_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { code?: string; coord?: string };
+    if (parsed.code !== code) return null;
+    return typeof parsed.coord === 'string' && /^[a-h][1-8]$/.test(parsed.coord)
+      ? parsed.coord
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function joinOnlineGame(code: string): Promise<OnlineSession> {

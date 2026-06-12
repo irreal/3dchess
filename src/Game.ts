@@ -16,10 +16,12 @@ import {
   clearStoredOnlineSession,
   createOnlineGame,
   fetchIceServers,
+  getStoredOnlinePossession,
   getStoredOnlineSession,
   joinOnlineGame,
   markOnlineInGame,
   OnlineClient,
+  saveOnlinePossession,
   syncGameUrl,
   wasOnlineInGame,
   type OnlineSession,
@@ -330,7 +332,11 @@ export class Game {
     this.renderer.setAnimationLoop(this.tick);
   }
 
-  /** Begin a game in the chosen mode. The player starts inside their king. */
+  /**
+   * Begin a game in the chosen mode. The player starts inside their king —
+   * except when rejoining an online game, where they return to the piece
+   * they were occupying before the reload (if it still stands).
+   */
   startGame(mode: GameMode, playerColor: PieceColor): void {
     this.mode = mode;
     this.playerColor = mode === 'free' ? 'white' : playerColor;
@@ -338,14 +344,23 @@ export class Game {
     this.lastMoveArrow.hide();
     if (mode === 'online') markOnlineInGame(true);
 
-    // Looked up (not hardcoded) because an online game may resume mid-way.
+    // King looked up (not hardcoded) because an online game may resume mid-way.
     const king = this.engine.kingSquare(this.playerColor);
-    const kingCoord = squareCoord(king.file, king.rank);
-    this.possess(kingCoord, true);
+    let startCoord = squareCoord(king.file, king.rank);
+    if (mode === 'online' && this.onlineSession) {
+      const remembered = getStoredOnlinePossession(this.onlineSession.code);
+      // The remembered piece may have been captured (or promoted away) while
+      // we were gone; only return to it if a friendly piece still stands there.
+      if (remembered && this.engine.pieceAt(coordToSquare(remembered))?.color === this.playerColor) {
+        startCoord = remembered;
+      }
+    }
+    this.possess(startCoord, true);
 
     // Face the opponent's side of the board.
-    const piece = this.engine.pieceAt(king);
-    const center = squareCenter(king.file, king.rank);
+    const startSquare = coordToSquare(startCoord);
+    const piece = this.engine.pieceAt(startSquare);
+    const center = squareCenter(startSquare.file, startSquare.rank);
     const forward = this.playerColor === 'white' ? 8 : -8;
     this.camera.lookAt(center.x, PIECE_EYE_HEIGHT[piece?.type ?? 'king'], center.z + forward);
 
@@ -458,8 +473,16 @@ export class Game {
     if (!piece || !group) return;
 
     this.possessedCoord = coord;
+    this.rememberPossession();
     this.controller.possess({ coord, group, eyeHeight: PIECE_EYE_HEIGHT[piece.type] }, instant);
     this.refreshMoveState();
+  }
+
+  /** Persist which piece we occupy so an online rejoin restores the same perspective. */
+  private rememberPossession(): void {
+    if (this.mode === 'online' && this.onlineSession) {
+      saveOnlinePossession(this.onlineSession.code, this.possessedCoord);
+    }
   }
 
   /**
@@ -609,6 +632,7 @@ export class Game {
     this.engine.makeMove(move);
     this.chessSet.applyMove(move);
     this.possessedCoord = squareCoord(move.to.file, move.to.rank);
+    this.rememberPossession();
     this.refreshMoveState();
 
     // We captured the piece the enemy's perspective was inside: its marker
@@ -1679,9 +1703,10 @@ export class Game {
 
     // Boot routing for online sessions. A ?join= code in the URL (kept there
     // for the whole online game) means a reload or invite link: go straight
-    // back to the lobby, or onto the board if this tab was mid-game. The bare
-    // root URL is a deliberate exit — stay on the menu and merely offer a
-    // resume button when a stored seat exists.
+    // back to the lobby, showing a "Rejoin the game" button if this tab was
+    // mid-game (pointer lock needs that click). The bare root URL is a
+    // deliberate exit — stay on the menu and merely offer a resume button
+    // when a stored seat exists.
     const joinCode = new URLSearchParams(window.location.search).get('join');
     if (joinCode) {
       void this.openOnlineLobby(joinCode, wasOnlineInGame());
@@ -1727,14 +1752,11 @@ export class Game {
    */
   private async openOnlineLobby(joinCode: string | null, resumeInGame = false): Promise<void> {
     const status = document.getElementById('online-status');
-    const menu = document.getElementById('menu');
     const onlinePanel = document.getElementById('online-panel');
 
     document.getElementById('resume-online')?.classList.add('hidden');
-    if (!resumeInGame) {
-      document.querySelector('#menu .modes')?.classList.add('hidden');
-      onlinePanel?.classList.remove('hidden');
-    }
+    document.querySelector('#menu .modes')?.classList.add('hidden');
+    onlinePanel?.classList.remove('hidden');
     if (status) {
       status.textContent = joinCode
         ? `Rejoining game ${joinCode.toUpperCase()}\u2026`
@@ -1745,17 +1767,9 @@ export class Game {
     try {
       session = joinCode ? await joinOnlineGame(joinCode) : await createOnlineGame();
     } catch (error) {
-      if (!resumeInGame) {
-        if (status) {
-          status.textContent = error instanceof Error ? error.message : 'Failed to reach the server';
-        }
-      } else {
-        markOnlineInGame(false);
-        onlinePanel?.classList.remove('hidden');
-        document.querySelector('#menu .modes')?.classList.add('hidden');
-        if (status) {
-          status.textContent = error instanceof Error ? error.message : 'Could not rejoin your game';
-        }
+      if (resumeInGame) markOnlineInGame(false);
+      if (status) {
+        status.textContent = error instanceof Error ? error.message : 'Failed to reach the server';
       }
       return;
     }
@@ -1781,19 +1795,18 @@ export class Game {
     }
     this.updateMediaUi();
 
-    if (resumeInGame) {
-      menu?.classList.add('hidden');
-      onlinePanel?.classList.add('hidden');
-      this.startGame('online', session.color);
-      return;
-    }
+    // No auto-start even when this tab was mid-game before the reload:
+    // pointer lock only engages from a user gesture, so the lobby always
+    // funnels through the start button (relabeled when rejoining).
+    const startButton = document.getElementById('online-start');
+    if (startButton) startButton.textContent = resumeInGame ? 'Rejoin the game' : 'Enter the game';
 
     const inviteLink = document.getElementById('invite-link') as HTMLInputElement | null;
     if (inviteLink) {
       inviteLink.value = `${location.origin}${location.pathname}?join=${session.code}`;
     }
     document.getElementById('invite-row')?.classList.remove('hidden');
-    document.getElementById('online-start')?.classList.remove('hidden');
+    startButton?.classList.remove('hidden');
     this.updateLobbyStatus();
   }
 
