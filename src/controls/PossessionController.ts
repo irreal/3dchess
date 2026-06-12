@@ -49,6 +49,12 @@ function easeInOutQuad(t: number): number {
 export class PossessionController {
   private readonly controls: PointerLockControls;
   private readonly keys = new Set<string>();
+  private readonly lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+  private touchEngaged = false;
+  private stickX = 0;
+  private stickY = 0;
+  private touchDuck = false;
 
   private possessed: PossessTarget | null = null;
   private transition: Transition | null = null;
@@ -94,6 +100,11 @@ export class PossessionController {
     return this.controls.isLocked;
   }
 
+  /** True while the player is actively controlling (pointer lock or touch). */
+  get isActive(): boolean {
+    return this.controls.isLocked || this.touchEngaged;
+  }
+
   get isTransitioning(): boolean {
     return this.transition !== null;
   }
@@ -105,7 +116,11 @@ export class PossessionController {
 
   /** Duck (Ctrl) is currently held. */
   get wantsDuck(): boolean {
-    return this.keys.has('ControlLeft') || this.keys.has('ControlRight');
+    return (
+      this.keys.has('ControlLeft') ||
+      this.keys.has('ControlRight') ||
+      this.touchDuck
+    );
   }
 
   /** Jump height and vertical scale from the piece antics, set every frame. */
@@ -116,6 +131,47 @@ export class PossessionController {
 
   lock(): void {
     this.controls.lock();
+  }
+
+  /** Enter touch play (mobile): skip pointer lock, keep traversal active. */
+  engageTouch(): void {
+    this.touchEngaged = true;
+    this.controls.dispatchEvent({ type: 'lock' });
+  }
+
+  /** Pause touch play and show the resume overlay. */
+  disengageTouch(): void {
+    if (!this.touchEngaged) return;
+    this.touchEngaged = false;
+    this.stickX = 0;
+    this.stickY = 0;
+    this.touchDuck = false;
+    this.controls.dispatchEvent({ type: 'unlock' });
+  }
+
+  setStickInput(x: number, y: number): void {
+    this.stickX = x;
+    this.stickY = y;
+  }
+
+  setTouchDuck(ducking: boolean): void {
+    this.touchDuck = ducking;
+  }
+
+  requestJump(): void {
+    if (this.isActive && !this.isTransitioning) this.onJump?.();
+  }
+
+  /** Drag-to-look on touch screens (replaces pointer-lock mouse deltas). */
+  rotateLook(deltaYaw: number, deltaPitch: number): void {
+    this.lookEuler.setFromQuaternion(this.camera.quaternion);
+    this.lookEuler.y -= deltaYaw;
+    this.lookEuler.x = THREE.MathUtils.clamp(
+      this.lookEuler.x - deltaPitch,
+      -Math.PI / 2,
+      Math.PI / 2,
+    );
+    this.camera.quaternion.setFromEuler(this.lookEuler);
   }
 
   addEventListener(type: 'lock' | 'unlock', listener: () => void): void {
@@ -197,7 +253,7 @@ export class PossessionController {
       Math.min(1, EYE_LERP_RATE * delta),
     );
 
-    if (this.controls.isLocked) {
+    if (this.isActive) {
       this.updateTraversal(delta);
     } else {
       this.dwell = 0;
@@ -367,10 +423,10 @@ export class PossessionController {
     this.wantCommit = false;
   }
 
-  /** Camera-relative WASD input projected onto the board plane, or null. */
+  /** Camera-relative WASD / stick input projected onto the board plane, or null. */
   private desiredDirection(): THREE.Vector3 | null {
-    let x = 0;
-    let y = 0;
+    let x = this.stickX;
+    let y = this.stickY;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) y += 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) y -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1;
@@ -405,10 +461,10 @@ export class PossessionController {
 
   private onKeyDown = (event: KeyboardEvent): void => {
     this.keys.add(event.code);
-    if (event.code === 'Enter' && this.controls.isLocked) {
+    if (event.code === 'Enter' && this.isActive) {
       this.wantCommit = true;
     }
-    if (event.code === 'Space' && this.controls.isLocked && !event.repeat) {
+    if (event.code === 'Space' && this.isActive && !event.repeat) {
       event.preventDefault(); // keep Space from re-triggering a focused button
       this.onJump?.();
     }
@@ -420,5 +476,8 @@ export class PossessionController {
 
   private onWindowBlur = (): void => {
     this.keys.clear();
+    this.stickX = 0;
+    this.stickY = 0;
+    this.touchDuck = false;
   };
 }

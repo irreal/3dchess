@@ -8,7 +8,9 @@ import {
   type PieceType,
   type Square,
 } from './chess/types';
+import { isTouchDevice } from './controls/isTouchDevice';
 import { PossessionController } from './controls/PossessionController';
+import { TouchControls } from './controls/TouchControls';
 import { buildCorridors } from './controls/corridors';
 import {
   createOnlineGame,
@@ -134,6 +136,8 @@ export class Game {
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly controller: PossessionController;
+  private readonly touchControls: TouchControls | null;
+  private readonly touchPlay = isTouchDevice();
   private readonly clock = new THREE.Clock();
 
   private readonly chessboard: Chessboard;
@@ -219,6 +223,8 @@ export class Game {
   private readonly dwellRing: HTMLElement | null;
 
   constructor(private readonly container: HTMLElement) {
+    if (this.touchPlay) document.documentElement.classList.add('touch');
+
     this.renderer = this.createRenderer();
     this.scene = this.createScene();
     this.camera = this.createCamera();
@@ -228,6 +234,19 @@ export class Game {
     this.controller.onJump = () => {
       if (!this.controller.isTransitioning) this.localAntics.jump();
     };
+
+    const touchRoot = document.getElementById('touch-controls');
+    if (this.touchPlay && touchRoot) {
+      this.touchControls = new TouchControls(this.controller, touchRoot);
+      this.touchControls.onTap = () => this.tryPossessAtCrosshair();
+      this.touchControls.onPause = () => {
+        this.controller.disengageTouch();
+        this.touchControls?.hide();
+      };
+    } else {
+      this.touchControls = null;
+    }
+
     this.setupMenu();
     this.setupOverlay();
 
@@ -298,7 +317,13 @@ export class Game {
     const forward = this.playerColor === 'white' ? 8 : -8;
     this.camera.lookAt(center.x, PIECE_EYE_HEIGHT[piece?.type ?? 'king'], center.z + forward);
 
-    this.controller.lock();
+    if (this.touchPlay) {
+      this.controller.engageTouch();
+      this.touchControls?.show();
+      document.getElementById('overlay')?.classList.add('hidden');
+    } else {
+      this.controller.lock();
+    }
 
     // The enemy's perspective starts inside its own king, mirroring the player.
     if (this.opponentColor) {
@@ -336,7 +361,7 @@ export class Game {
     // and the crouch this same frame (and before ChessSet so committed-move
     // animations keep authority over the piece's vertical position).
     this.localAntics.attach(this.inGame ? (this.chessSet.getPiece(this.possessedCoord) ?? null) : null);
-    this.localAntics.setDuck(this.controller.isLocked && this.controller.wantsDuck);
+    this.localAntics.setDuck(this.controller.isActive && this.controller.wantsDuck);
     this.localAntics.update(delta);
     this.controller.setVerticalPose(this.localAntics.height, this.localAntics.verticalScale);
 
@@ -432,7 +457,7 @@ export class Game {
   }
 
   private updateHoverIndicator(): void {
-    const square = this.controller.isLocked ? this.pickSquare() : null;
+    const square = this.controller.isActive ? this.pickSquare() : null;
     if (!square) {
       this.squareIndicator.hide();
       return;
@@ -456,7 +481,7 @@ export class Game {
   }
 
   private onMouseDown = (event: MouseEvent): void => {
-    if (!this.controller.isLocked) return;
+    if (!this.controller.isActive) return;
 
     // Right click: retreat to the origin square, abandoning the walk.
     if (event.button === 2) {
@@ -464,8 +489,13 @@ export class Game {
       return;
     }
     if (event.button !== 0 || this.gameOver) return;
+    this.tryPossessAtCrosshair();
+  };
 
-    // Left click on a friendly piece: leap into it.
+  /** Leap into the friendly piece under the crosshair, if any. */
+  private tryPossessAtCrosshair(): void {
+    if (!this.controller.isActive || this.gameOver) return;
+
     const square = this.pickSquare();
     if (!square) return;
 
@@ -474,7 +504,7 @@ export class Game {
     if (piece && piece.color === this.controlledColor && coord !== this.possessedCoord) {
       this.possess(coord, false);
     }
-  };
+  }
 
   private playMove(move: Move): void {
     // Online: tell the server first (the move is locally legal, so the
@@ -892,7 +922,12 @@ export class Game {
 
     // A modest feed: plenty for a face on a 0.84 m screen, cheap to encode.
     const stream = await this.requestMedia('camera', {
-      video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
+      video: {
+        facingMode: 'user',
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 24 },
+      },
     });
     if (!stream) return;
     console.info('[rtc] camera enabled');
@@ -1137,12 +1172,17 @@ export class Game {
     const toMove = this.engine.turn;
 
     if (this.possessedMoves.length > 0) {
-      this.hint.textContent =
-        'WASD \u2014 walk a legal path \u00b7 rest or Enter \u2014 confirm \u00b7 right-click \u2014 retreat';
+      this.hint.textContent = this.touchPlay
+        ? 'Joystick \u2014 walk a legal path \u00b7 rest on a square \u2014 confirm the move'
+        : 'WASD \u2014 walk a legal path \u00b7 rest or Enter \u2014 confirm \u00b7 right-click \u2014 retreat';
     } else if (piece && piece.color === toMove) {
-      this.hint.textContent = `No legal moves from here \u2014 click another ${toMove} piece to jump into it`;
+      this.hint.textContent = this.touchPlay
+        ? `No legal moves from here \u2014 tap another ${toMove} piece to jump into it`
+        : `No legal moves from here \u2014 click another ${toMove} piece to jump into it`;
     } else {
-      this.hint.textContent = `${capitalize(toMove)} to move \u2014 click a ${toMove} piece to take control`;
+      this.hint.textContent = this.touchPlay
+        ? `${capitalize(toMove)} to move \u2014 tap a ${toMove} piece to take control`
+        : `${capitalize(toMove)} to move \u2014 click a ${toMove} piece to take control`;
     }
   }
 
@@ -1155,7 +1195,7 @@ export class Game {
     if (!pointer) return;
 
     const enemyColor = this.opponentColor;
-    if (!enemyColor || !this.enemyPossessedCoord || !this.controller.isLocked) {
+    if (!enemyColor || !this.enemyPossessedCoord || !this.controller.isActive) {
       pointer.classList.add('hidden');
       return;
     }
@@ -1240,6 +1280,7 @@ export class Game {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.container.appendChild(renderer.domElement);
+    renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
     return renderer;
   }
 
@@ -1411,9 +1452,27 @@ export class Game {
     const overlay = document.getElementById('overlay');
     if (!overlay) return;
 
-    overlay.addEventListener('click', () => this.controller.lock());
-    this.controller.addEventListener('lock', () => overlay.classList.add('hidden'));
-    this.controller.addEventListener('unlock', () => overlay.classList.remove('hidden'));
+    const resume = overlay.querySelector('p');
+    if (resume && this.touchPlay) {
+      resume.textContent = 'Tap to resume';
+    }
+
+    overlay.addEventListener('click', () => {
+      if (this.touchPlay) {
+        this.controller.engageTouch();
+        if (this.inGame) this.touchControls?.show();
+      } else {
+        this.controller.lock();
+      }
+    });
+    this.controller.addEventListener('lock', () => {
+      overlay.classList.add('hidden');
+      if (this.inGame && this.touchPlay) this.touchControls?.show();
+    });
+    this.controller.addEventListener('unlock', () => {
+      overlay.classList.remove('hidden');
+      this.touchControls?.hide();
+    });
   }
 
   private onResize = (): void => {
