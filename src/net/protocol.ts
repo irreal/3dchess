@@ -56,6 +56,9 @@ export interface RtcSignalPayload {
   description?: RTCSessionDescriptionInit;
   /** Null signals end-of-candidates. */
   candidate?: RTCIceCandidateInit | null;
+  /** Ask the friend to tear down their peer connection and start fresh
+   * (a new connection cannot resume against a stale one). */
+  reset?: boolean;
 }
 
 export interface AppliedMove extends MovePayload {

@@ -146,9 +146,14 @@
           monospace;
       }
 
+      #av-restart.hidden {
+        display: none;
+      }
+
       #copy-link,
       #camera-toggle,
       #mic-toggle,
+      #av-restart,
       #online-start {
         padding: 10px 18px;
         border: 1px solid rgba(255, 255, 255, 0.25);
@@ -167,6 +172,7 @@
       #copy-link:hover,
       #camera-toggle:hover,
       #mic-toggle:hover,
+      #av-restart:hover,
       #online-start:hover {
         background: rgba(255, 255, 255, 0.18);
         border-color: rgba(255, 255, 255, 0.55);
@@ -426,6 +432,7 @@
     <div id="overlay" class="hidden">
       <h1>Paused</h1>
       <p>Click to resume</p>
+      <button id="av-restart" class="hidden">Restart camera &amp; voice</button>
     </div>
     <video id="self-view" class="hidden" autoplay muted playsinline></video>
     <script type="module" src="/src/main.ts"></script>

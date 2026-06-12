@@ -4,14 +4,6 @@ function log(...args: unknown[]): void {
   console.info('[rtc]', ...args);
 }
 
-/**
- * If our offer goes unanswered this long, re-send it. A lost offer otherwise
- * deadlocks negotiation (both sides waiting forever); re-sent offers are safe
- * under perfect negotiation — the polite side rolls back and answers, the
- * impolite side ignores them and its own re-send resolves the pair.
- */
-const OFFER_ANSWER_TIMEOUT_MS = 5000;
-const WATCHDOG_INTERVAL_MS = 3000;
 
 /**
  * One peer-to-peer audio/video connection to the online friend, signaled
@@ -30,14 +22,12 @@ export class VideoCall {
 
   private readonly pc: RTCPeerConnection;
   private readonly remote = new MediaStream();
-  private senders: RTCRtpSender[] = [];
+  private readonly audioTransceiver: RTCRtpTransceiver;
+  private readonly videoTransceiver: RTCRtpTransceiver;
 
   private makingOffer = false;
   private ignoreOffer = false;
   private settingRemoteAnswer = false;
-
-  private offerSentAt = 0;
-  private readonly watchdog: number;
 
   constructor(
     private readonly polite: boolean,
@@ -55,13 +45,20 @@ export class VideoCall {
 
     this.pc = new RTCPeerConnection({ iceServers });
 
+    // One fixed transceiver per kind, created before any negotiation: the
+    // SDP m-line layout is identical on both sides forever, and camera/mic
+    // toggles become replaceTrack calls that need no renegotiation at all.
+    // (Tearing tracks down and re-adding them instead reorders m-lines and
+    // miscouples crossing offers/answers — the bug this design replaces.)
+    this.audioTransceiver = this.pc.addTransceiver('audio', { direction: 'sendrecv' });
+    this.videoTransceiver = this.pc.addTransceiver('video', { direction: 'sendrecv' });
+
     this.pc.onnegotiationneeded = async () => {
       try {
         this.makingOffer = true;
         await this.pc.setLocalDescription();
         if (this.pc.localDescription) {
           log('negotiation needed → sending', this.pc.localDescription.type);
-          this.offerSentAt = Date.now();
           this.sendSignal({ description: this.pc.localDescription.toJSON() });
         }
       } catch (error) {
@@ -70,18 +67,6 @@ export class VideoCall {
         this.makingOffer = false;
       }
     };
-
-    this.watchdog = window.setInterval(() => {
-      if (
-        this.pc.signalingState === 'have-local-offer' &&
-        Date.now() - this.offerSentAt > OFFER_ANSWER_TIMEOUT_MS &&
-        this.pc.localDescription
-      ) {
-        log('no answer received → re-sending offer');
-        this.offerSentAt = Date.now();
-        this.sendSignal({ description: this.pc.localDescription.toJSON() });
-      }
-    }, WATCHDOG_INTERVAL_MS);
 
     this.pc.onicecandidate = ({ candidate }) => {
       if (!candidate) log('local candidate gathering complete');
@@ -160,18 +145,19 @@ export class VideoCall {
   }
 
   /**
-   * Replace what we send (any mix of camera and mic tracks); triggers
-   * renegotiation in both directions.
+   * Replace what we send (any mix of camera and mic tracks). After the
+   * initial handshake this is pure replaceTrack — instant, no renegotiation.
    */
   setLocalTracks(tracks: MediaStreamTrack[]): void {
     log('sending local tracks:', tracks.map((track) => track.kind).join(', ') || '(none)');
-    for (const sender of this.senders) this.pc.removeTrack(sender);
-    this.senders = [];
-    // One grouping stream so the receiver sees camera + mic as one unit.
-    const group = new MediaStream(tracks);
-    for (const track of tracks) {
-      this.senders.push(this.pc.addTrack(track, group));
-    }
+    const audio = tracks.find((track) => track.kind === 'audio') ?? null;
+    const video = tracks.find((track) => track.kind === 'video') ?? null;
+    void this.audioTransceiver.sender
+      .replaceTrack(audio)
+      .catch((error) => console.warn('[rtc] audio replaceTrack failed', error));
+    void this.videoTransceiver.sender
+      .replaceTrack(video)
+      .catch((error) => console.warn('[rtc] video replaceTrack failed', error));
   }
 
   /** Feed a relayed signal from the friend into the negotiation machine. */
@@ -215,7 +201,6 @@ export class VideoCall {
   }
 
   close(): void {
-    window.clearInterval(this.watchdog);
     this.pc.close();
     for (const track of this.remote.getTracks()) this.remote.removeTrack(track);
     this.notifyRemote();

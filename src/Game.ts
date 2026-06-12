@@ -615,6 +615,11 @@ export class Game {
         this.handlePresence(message.presence);
         break;
       case 'rtc':
+        if (message.payload.reset) {
+          console.info('[rtc] friend requested a call reset');
+          this.resetVideoCall(false);
+          break;
+        }
         // Awaiting the same memoized call promise keeps signal order intact.
         void this.ensureVideoCall().then((call) => call?.handleSignal(message.payload));
         break;
@@ -946,6 +951,28 @@ export class Game {
     void this.ensureVideoCall().then((call) => call?.setLocalTracks(tracks));
   }
 
+  /**
+   * Tear down the call and start fresh (the "Restart A/V" escape hatch and
+   * its remote counterpart). Resets are mutual: a brand-new peer connection
+   * cannot resume against the friend's stale one, so the initiator tells the
+   * other side to rebuild too. Local camera/mic streams survive the reset.
+   */
+  private resetVideoCall(notifyFriend: boolean): void {
+    if (notifyFriend) this.online?.send({ type: 'rtc', payload: { reset: true } });
+    console.info('[rtc] resetting the call');
+
+    this.videoCall?.close();
+    this.videoCall = null;
+    this.faceScreen.setStream(null);
+    this.remoteAudio.srcObject = null;
+
+    // With local media on, recreating the call kicks off a fresh negotiation;
+    // otherwise it re-arms lazily when the friend's next signal arrives.
+    if (this.localCameraStream || this.localMicStream) {
+      this.syncOutgoingTracks();
+    }
+  }
+
   /** Mirror our own feed in the corner and keep the lobby buttons labeled. */
   private updateMediaUi(): void {
     const video = document.getElementById('self-view') as HTMLVideoElement | null;
@@ -962,6 +989,7 @@ export class Game {
     if (micButton) {
       micButton.textContent = this.localMicStream ? 'Mute mic' : 'Enable mic';
     }
+    document.getElementById('av-restart')?.classList.toggle('hidden', !this.onlineSession);
   }
 
   /**
@@ -1294,6 +1322,13 @@ export class Game {
       .getElementById('mic-toggle')
       ?.addEventListener('click', () => void this.toggleMicrophone());
 
+    // Lives in the pause overlay (the cursor is captured during play); the
+    // click must not bubble into the overlay's click-to-resume handler.
+    document.getElementById('av-restart')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.resetVideoCall(true);
+    });
+
     document.getElementById('copy-link')?.addEventListener('click', (event) => {
       const input = document.getElementById('invite-link') as HTMLInputElement | null;
       const button = event.currentTarget as HTMLButtonElement;
@@ -1351,6 +1386,7 @@ export class Game {
     if (this.localCameraStream || this.localMicStream) {
       this.syncOutgoingTracks();
     }
+    this.updateMediaUi();
 
     const inviteLink = document.getElementById('invite-link') as HTMLInputElement | null;
     if (inviteLink) {
