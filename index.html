@@ -344,23 +344,43 @@
       }
 
       #enemy-pointer .bubble {
+        position: relative;
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 42px;
-        height: 42px;
+        width: 110px;
+        height: 110px;
         border-radius: 50%;
         background: rgba(150, 28, 24, 0.85);
-        border: 2px solid rgba(255, 125, 110, 0.9);
-        box-shadow: 0 0 16px rgba(255, 70, 50, 0.55);
+        border: 3px solid rgba(255, 125, 110, 0.9);
+        box-shadow: 0 0 22px rgba(255, 70, 50, 0.55);
+        overflow: hidden;
       }
 
       #enemy-pointer .glyph {
         font-family: serif;
-        font-size: 26px;
+        font-size: 64px;
         line-height: 1;
         /* Keep the piece icon upright while the pointer rotates. */
         transform: rotate(calc(var(--angle, 0rad) * -1));
+      }
+
+      /* The friend's live camera feed, replacing the glyph when enabled.
+         Oversized by sqrt(2) so the counter-rotated frame always covers the
+         circular bubble at any pointer angle. */
+      #enemy-pointer-video {
+        position: absolute;
+        left: -21%;
+        top: -21%;
+        width: 142%;
+        height: 142%;
+        object-fit: cover;
+        transform: rotate(calc(var(--angle, 0rad) * -1));
+      }
+
+      #enemy-pointer .glyph.hidden,
+      #enemy-pointer-video.hidden {
+        display: none;
       }
 
       #enemy-pointer.white .glyph {
@@ -375,7 +395,7 @@
 
       #enemy-pointer .arrow {
         color: #ff6f5e;
-        font-size: 17px;
+        font-size: 26px;
         line-height: 1;
         text-shadow: 0 0 8px rgba(255, 70, 50, 0.8);
       }
@@ -421,7 +441,9 @@
         touch-action: none;
       }
 
-      /* Warm-up ready button (online play): tap on touch, Enter on desktop. */
+      /* Warm-up ready button (online play): tap on touch, Enter on desktop.
+         Sits above the pause overlay so it stays clickable when the pointer
+         lock is released with Esc (while locked there is no cursor at all). */
       #ready-button {
         position: fixed;
         top: 64px;
@@ -437,7 +459,7 @@
         font-weight: 700;
         letter-spacing: 0.02em;
         cursor: pointer;
-        z-index: 6;
+        z-index: 11;
         transition:
           background 0.15s,
           border-color 0.15s;
@@ -692,6 +714,21 @@
           padding: 10px 20px;
         }
 
+        /* Smaller pointer on phones; the screen has far less room to spare. */
+        #enemy-pointer .bubble {
+          width: 64px;
+          height: 64px;
+          border-width: 2px;
+        }
+
+        #enemy-pointer .glyph {
+          font-size: 38px;
+        }
+
+        #enemy-pointer .arrow {
+          font-size: 18px;
+        }
+
         #game-camera-toggle,
         #game-mic-toggle {
           font-size: 12px;
@@ -770,7 +807,10 @@
     </div>
     <div id="hint">Look at a white piece and click to take control</div>
     <div id="enemy-pointer" class="hidden black">
-      <span class="bubble"><span class="glyph" id="enemy-pointer-glyph">&#x265A;</span></span>
+      <span class="bubble">
+        <span class="glyph" id="enemy-pointer-glyph">&#x265A;</span>
+        <video id="enemy-pointer-video" class="hidden" autoplay muted playsinline></video>
+      </span>
       <span class="arrow">&#x25B6;</span>
     </div>
     <div id="menu">

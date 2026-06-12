@@ -7,6 +7,21 @@ const FRAME_PADDING = 0.05;
 
 /** How far in front of the possessed piece the screen floats. */
 const FORWARD_OFFSET = 0.62;
+/** Leap arc apex: extra height per meter of travel, capped. */
+const LEAP_ARC_PER_M = 0.15;
+const LEAP_ARC_MAX = 1.0;
+
+/** A flight from the old pose to wherever the live target pose is now. */
+interface Leap {
+  from: THREE.Vector3;
+  elapsed: number;
+  /** Set from the travel distance on the first frame of the leap. */
+  duration: number | null;
+}
+
+function easeInOutQuad(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+}
 /**
  * Lift above the piece's eye height, so it reads as a floating projection —
  * kept small so two same-height pieces meet each other's screens roughly at
@@ -93,8 +108,10 @@ export class FaceScreen {
   private videoTrack: MediaStreamTrack | null = null;
   private cameraEnabled = false;
   private readonly onVideoStateChange = (): void => this.applyVideoState();
+  private leap: Leap | null = null;
   private readonly tmpDir = new THREE.Vector3();
   private readonly tmpAnchor = new THREE.Vector3();
+  private readonly tmpTarget = new THREE.Vector3();
 
   constructor() {
     this.object.name = 'face-screen';
@@ -189,6 +206,17 @@ export class FaceScreen {
   }
 
   /**
+   * Fly to the pose of the upcoming {@link updatePose} calls along an arc
+   * instead of snapping there — the friend switched pieces, mirroring the
+   * possession marker's leap. No-op while the screen is hidden (nothing to
+   * fly from; the next pose update simply places it).
+   */
+  startLeap(): void {
+    if (!this.object.visible) return;
+    this.leap = { from: this.object.position.clone(), elapsed: 0, duration: null };
+  }
+
+  /**
    * Park the screen in front of the piece, orbited to the given yaw and
    * pitch and facing the same way, riding jumps and crouches via the piece's
    * live position and eye scale.
@@ -199,6 +227,7 @@ export class FaceScreen {
     eyeScale: number,
     yaw: number,
     pitch: number,
+    delta: number,
   ): void {
     // Rebuild the gaze vector from yaw/pitch — applying pitch as rotation.x
     // after yaw does not reproduce the camera's look direction (yaw-only works).
@@ -212,12 +241,33 @@ export class FaceScreen {
       piecePosition.y + eyeHeight * eyeScale + LIFT,
       piecePosition.z,
     );
-    this.object.position.copy(this.tmpAnchor).addScaledVector(this.tmpDir, FORWARD_OFFSET);
+    this.tmpTarget.copy(this.tmpAnchor).addScaledVector(this.tmpDir, FORWARD_OFFSET);
     // Orient from yaw/pitch directly (YXZ: yaw about world up, then pitch)
     // so the screen never rolls. Deriving the rotation from the gaze vector
     // via setFromUnitVectors picks the shortest arc, which injects roll and
     // can leave the screen tilted or upside down for rear-facing directions.
+    // The look orientation streams live, so it never interpolates — even
+    // mid-leap the face keeps pointing where the friend is actually looking.
     this.object.rotation.set(-pitch, yaw, 0, 'YXZ');
+
+    if (this.leap) {
+      const leap = this.leap;
+      // The destination tracks a live target (the new piece may be dodging
+      // or walking), so it is re-read every frame; the duration is pinned
+      // from the distance at takeoff.
+      leap.duration ??= Math.min(1.1, 0.35 + leap.from.distanceTo(this.tmpTarget) * 0.05);
+      leap.elapsed += delta;
+      const t = Math.min(1, leap.elapsed / leap.duration);
+      const e = easeInOutQuad(t);
+      this.object.position.lerpVectors(leap.from, this.tmpTarget, e);
+      const distance = leap.from.distanceTo(this.tmpTarget);
+      this.object.position.y +=
+        Math.sin(Math.PI * e) * Math.min(LEAP_ARC_MAX, distance * LEAP_ARC_PER_M);
+      if (t >= 1) this.leap = null;
+      return;
+    }
+
+    this.object.position.copy(this.tmpTarget);
   }
 
   setVisible(visible: boolean): void {

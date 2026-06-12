@@ -62,7 +62,7 @@ const MARKER_GAP = 0.65;
 const POINTER_EDGE_NDC = 1.0;
 
 /** Distance (px) the off-screen pointer keeps from the window edges. */
-const POINTER_MARGIN_PX = 70;
+const POINTER_MARGIN_PX = 85;
 
 /**
  * Live presence stream (online play): how often the local possession/walk
@@ -228,6 +228,7 @@ export class Game {
   private readonly tmpLookDir = new THREE.Vector3();
   private readonly enemyPointer: HTMLElement | null;
   private readonly enemyPointerGlyph: HTMLElement | null;
+  private readonly enemyPointerVideo: HTMLVideoElement | null;
   private readonly tmpProjected = new THREE.Vector3();
   private readonly tmpPointerTarget = new THREE.Vector3();
   private readonly tmpToMarker = new THREE.Vector3();
@@ -305,6 +306,9 @@ export class Game {
     this.hud = document.getElementById('hud');
     this.enemyPointer = document.getElementById('enemy-pointer');
     this.enemyPointerGlyph = document.getElementById('enemy-pointer-glyph');
+    this.enemyPointerVideo = document.getElementById(
+      'enemy-pointer-video',
+    ) as HTMLVideoElement | null;
     this.badge = document.getElementById('piece-badge');
     this.badgeGlyph = document.getElementById('badge-glyph');
     this.badgeName = document.getElementById('badge-name');
@@ -599,7 +603,10 @@ export class Game {
       const kingCoord = squareCoord(king.file, king.rank);
       this.enemyPossessedCoord = kingCoord;
       const group = this.chessSet.getPiece(kingCoord);
-      if (group) this.enemyMarker.leapTo(group, this.markerHeight('king'));
+      if (group) {
+        this.enemyMarker.leapTo(group, this.markerHeight('king'));
+        this.faceScreen.startLeap();
+      }
     }
 
     if (!this.gameOver && this.cpuColor === this.engine.turn) {
@@ -639,6 +646,7 @@ export class Game {
     }
 
     this.enemyPossessedCoord = fromCoord;
+    this.faceScreen.startLeap();
     this.enemyMarker.leapTo(group, this.markerHeight(move.piece), () => {
       this.enemyMoveTimer = window.setTimeout(() => {
         this.enemyMoveTimer = null;
@@ -776,7 +784,10 @@ export class Game {
       const enemyKingCoord = squareCoord(enemyKing.file, enemyKing.rank);
       this.enemyPossessedCoord = enemyKingCoord;
       const group = this.chessSet.getPiece(enemyKingCoord);
-      if (group) this.enemyMarker.leapTo(group, this.markerHeight('king'));
+      if (group) {
+        this.enemyMarker.leapTo(group, this.markerHeight('king'));
+        this.faceScreen.startLeap();
+      }
     }
     this.syncReadyUi();
   }
@@ -800,7 +811,9 @@ export class Game {
     button.disabled = this.weAreReady;
     button.textContent = this.weAreReady
       ? 'Waiting for your friend\u2026'
-      : "I'm ready \u2014 start the game";
+      : this.touchPlay
+        ? "I'm ready \u2014 start the game"
+        : "I'm ready \u2014 start the game (Enter)";
   }
 
   // --- Live presence: streaming our movements out -------------------------
@@ -903,6 +916,7 @@ export class Game {
       const piece = this.engine.pieceAt(coordToSquare(presence.possessed));
       if (group && piece && this.inGame) {
         this.enemyMarker.leapTo(group, this.markerHeight(piece.type));
+        this.faceScreen.startLeap();
       }
     }
 
@@ -1243,6 +1257,7 @@ export class Game {
       this.remoteAntics.verticalScale,
       this.remoteYawSmoothed,
       this.remotePitchSmoothed,
+      delta,
     );
     this.faceScreen.refreshVideoState();
     this.faceScreen.setVisible(true);
@@ -1470,12 +1485,39 @@ export class Game {
     pointer.style.setProperty('--y', `${y.toFixed(1)}px`);
     pointer.style.setProperty('--angle', `${angle.toFixed(4)}rad`);
 
+    const useVideo = this.syncEnemyPointerVideo();
     if (this.enemyPointerGlyph) {
+      this.enemyPointerGlyph.classList.toggle('hidden', useVideo);
       this.enemyPointerGlyph.textContent = PIECE_GLYPHS[occupant.type];
     }
     pointer.classList.toggle('white', enemyColor === 'white');
     pointer.classList.toggle('black', enemyColor === 'black');
     pointer.classList.remove('hidden');
+  }
+
+  /**
+   * Show the friend's live camera feed in the off-screen pointer bubble when
+   * available, falling back to the piece glyph. Returns whether video is on.
+   */
+  private syncEnemyPointerVideo(): boolean {
+    const video = this.enemyPointerVideo;
+    if (!video) return false;
+
+    const hasLiveVideo =
+      this.remoteMediaStream?.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted) ??
+      false;
+    const useVideo = (this.remoteCameraOn ?? hasLiveVideo) && hasLiveVideo;
+
+    if (useVideo) {
+      if (video.srcObject !== this.remoteMediaStream) {
+        video.srcObject = this.remoteMediaStream;
+        void video.play().catch(() => {});
+      }
+    } else if (video.srcObject) {
+      video.srcObject = null;
+    }
+    video.classList.toggle('hidden', !useVideo);
+    return useVideo;
   }
 
   private updateDwellRing(): void {
