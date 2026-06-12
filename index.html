@@ -588,10 +588,12 @@
         will-change: transform;
       }
 
-      /* Round icon action buttons arranged in an arc around the look (right)
-         joystick — GTA-style — so they never overlap the joysticks the way a
-         centered button row did in portrait. Positions below clear the
-         128px joystick base (top edge ~144px up from the bottom). */
+      /* Round icon buttons. The critical action lives on the right (look
+         joystick / aiming thumb) via the contextual #touch-context pill; the
+         "just for fun" jump/duck cluster moves to the left around the move
+         joystick, and pause sits top-left — so nothing crowds the right thumb
+         or overlaps the joysticks. Bottom offsets clear the 128px joystick
+         base (top edge ~144px up from the bottom). */
       .touch-action {
         position: absolute;
         display: flex;
@@ -621,22 +623,56 @@
       }
 
       #touch-jump {
-        right: max(52px, calc(52px + env(safe-area-inset-right)));
+        left: max(52px, calc(52px + env(safe-area-inset-left)));
         bottom: max(158px, calc(148px + env(safe-area-inset-bottom)));
         background: rgba(85, 255, 153, 0.18);
         border-color: rgba(85, 255, 153, 0.45);
       }
 
       #touch-duck {
-        right: max(132px, calc(132px + env(safe-area-inset-right)));
-        bottom: max(198px, calc(188px + env(safe-area-inset-bottom)));
+        left: max(52px, calc(52px + env(safe-area-inset-left)));
+        bottom: max(230px, calc(220px + env(safe-area-inset-bottom)));
       }
 
       #touch-pause {
         width: 52px;
         height: 52px;
-        right: max(64px, calc(64px + env(safe-area-inset-right)));
-        bottom: max(258px, calc(248px + env(safe-area-inset-bottom)));
+        top: max(64px, calc(52px + env(safe-area-inset-top)));
+        left: max(16px, env(safe-area-inset-left));
+      }
+
+      /* Contextual primary action: jump into the targeted friendly piece, or
+         commit the move to the targeted square. Shown by Game only when the
+         crosshair is on a valid target; sits above the look joystick. */
+      #touch-context {
+        position: absolute;
+        right: max(16px, env(safe-area-inset-right));
+        bottom: max(158px, calc(148px + env(safe-area-inset-bottom)));
+        max-width: 60vw;
+        padding: 14px 24px;
+        border: 2px solid rgba(85, 255, 153, 0.6);
+        border-radius: 999px;
+        background: rgba(85, 255, 153, 0.22);
+        color: #fff;
+        font: inherit;
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: auto;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      #touch-context:active {
+        background: rgba(85, 255, 153, 0.38);
+      }
+
+      #touch-context.hidden {
+        display: none;
       }
 
       #touch-pause svg {
@@ -808,22 +844,20 @@
           margin: -22px 0 0 -22px;
         }
 
-        /* Landscape is short: tuck the action arc to the inner-left of the
-           (smaller, 108px) look joystick instead of stacking it upward, so it
-           stays clear of the top HUD, ready button and self-view. */
+        /* Landscape: the joysticks shrink to 108px (top edge ~124px up), so
+           the side clusters can sit a little lower and tighter. */
         #touch-jump {
-          right: max(132px, calc(132px + env(safe-area-inset-right)));
-          bottom: max(24px, calc(16px + env(safe-area-inset-bottom)));
+          left: max(48px, calc(48px + env(safe-area-inset-left)));
+          bottom: max(134px, calc(124px + env(safe-area-inset-bottom)));
         }
 
         #touch-duck {
-          right: max(150px, calc(150px + env(safe-area-inset-right)));
-          bottom: max(104px, calc(96px + env(safe-area-inset-bottom)));
+          left: max(48px, calc(48px + env(safe-area-inset-left)));
+          bottom: max(206px, calc(196px + env(safe-area-inset-bottom)));
         }
 
-        #touch-pause {
-          right: max(226px, calc(226px + env(safe-area-inset-right)));
-          bottom: max(40px, calc(32px + env(safe-area-inset-bottom)));
+        #touch-context {
+          bottom: max(134px, calc(124px + env(safe-area-inset-bottom)));
         }
 
         #piece-badge,
@@ -897,8 +931,9 @@
         V / M — same toggles from the keyboard
       </p>
       <p class="controls-help-mobile">
-        Left joystick — walk &nbsp;·&nbsp; Right joystick — look &nbsp;·&nbsp; Tap the board — jump into a piece<br />
-        Rest on a square — confirm the move &nbsp;·&nbsp; Tap a highlighted square — move there<br />
+        Left joystick — walk &nbsp;·&nbsp; Right joystick — look<br />
+        Aim at a piece or square — the action button jumps you in or makes the move<br />
+        Rest on a destination square — also confirms the move<br />
         Jump / Duck — just for fun; your friend sees it live in online play<br />
         Camera / Mic buttons (top-left) — toggle video and voice in online play
       </p>
@@ -933,6 +968,7 @@
           <rect x="14" y="5" width="4" height="14" rx="1" />
         </svg>
       </button>
+      <button id="touch-context" class="hidden" type="button"></button>
     </div>
     <div id="overlay" class="hidden">
       <h1>Paused</h1>

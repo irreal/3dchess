@@ -247,6 +247,8 @@ export class Game {
   private readonly badgeSquare: HTMLElement | null;
   private readonly hint: HTMLElement | null;
   private readonly dwellRing: HTMLElement | null;
+  /** Touch-only contextual action: jump into a piece, or commit a move. */
+  private readonly touchActionButton: HTMLButtonElement | null;
 
   constructor(private readonly container: HTMLElement) {
     if (this.touchPlay) document.documentElement.classList.add('touch');
@@ -264,13 +266,21 @@ export class Game {
     const touchRoot = document.getElementById('touch-controls');
     if (this.touchPlay && touchRoot) {
       this.touchControls = new TouchControls(this.controller, touchRoot);
-      this.touchControls.onTap = () => this.tryPossessAtCrosshair();
       this.touchControls.onPause = () => {
         this.controller.disengageTouch();
         this.touchControls?.hide();
       };
     } else {
       this.touchControls = null;
+    }
+
+    this.touchActionButton = document.getElementById('touch-context') as HTMLButtonElement | null;
+    if (this.touchPlay) {
+      this.touchActionButton?.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.tryPossessAtCrosshair();
+      });
     }
 
     this.setupMenu();
@@ -558,6 +568,7 @@ export class Game {
     const square = this.controller.isActive ? this.pickSquare() : null;
     if (!square) {
       this.squareIndicator.hide();
+      this.updateTouchAction(null, null);
       return;
     }
 
@@ -569,6 +580,8 @@ export class Game {
       text = move.san;
     }
 
+    this.updateTouchAction(square, move ?? null);
+
     const { x, z } = squareCenter(square.file, square.rank);
     this.squareIndicator.show(
       new THREE.Vector3(x, 0, z),
@@ -576,6 +589,42 @@ export class Game {
       this.camera,
       this.engine.pieceAt(square) ?? undefined,
     );
+  }
+
+  /**
+   * Touch play has no screen tapping; instead the contextual button mirrors
+   * what {@link tryPossessAtCrosshair} would do for the crosshair's current
+   * target — jump into a friendly piece, or commit a move to a legal square —
+   * and hides when neither applies.
+   */
+  private updateTouchAction(square: Square | null, move: Move | null): void {
+    if (!this.touchPlay) return;
+    if (!square || this.gameOver || !this.controller.isActive) {
+      this.setTouchAction(null);
+      return;
+    }
+    if (move) {
+      this.setTouchAction(`Move to ${squareCoord(square.file, square.rank)}`);
+      return;
+    }
+    const piece = this.engine.pieceAt(square);
+    const coord = squareCoord(square.file, square.rank);
+    if (piece && piece.color === this.controlledColor && coord !== this.possessedCoord) {
+      this.setTouchAction(`Jump to ${PIECE_NAMES[piece.type]}`);
+      return;
+    }
+    this.setTouchAction(null);
+  }
+
+  private setTouchAction(label: string | null): void {
+    const button = this.touchActionButton;
+    if (!button) return;
+    if (label === null) {
+      button.classList.add('hidden');
+      return;
+    }
+    if (button.textContent !== label) button.textContent = label;
+    button.classList.remove('hidden');
   }
 
   private onMouseDown = (event: MouseEvent): void => {

@@ -1,8 +1,6 @@
 import type { PossessionController } from './PossessionController';
 
 const JOYSTICK_RADIUS = 52;
-/** Movement below this (px) on open screen counts as a tap-to-possess. */
-const TAP_SLOP_PX = 14;
 
 interface JoystickSlot {
   pointerId: number | null;
@@ -13,27 +11,22 @@ interface JoystickSlot {
 }
 
 /**
- * Twin joysticks (move + look), action buttons and a tap-anywhere layer for
- * touch play. Pointer lock is unreliable on mobile, so the controller runs in
- * touch-engaged mode instead.
+ * Twin joysticks (move + look) plus action buttons for touch play. Pointer
+ * lock is unreliable on mobile, so the controller runs in touch-engaged mode
+ * instead. Possessing pieces and committing moves happens through the
+ * on-screen contextual action button (owned by Game), not by tapping the
+ * screen — a stray tap on joystick release used to fire an unwanted action.
  */
 export class TouchControls {
   private readonly root: HTMLElement;
-  private readonly tapZone: HTMLElement;
   private readonly moveJoy: JoystickSlot;
   private readonly lookJoy: JoystickSlot;
   private readonly jumpBtn: HTMLButtonElement;
   private readonly duckBtn: HTMLButtonElement;
   private readonly pauseBtn: HTMLButtonElement;
 
-  private tapPointerId: number | null = null;
-  private tapLast = { x: 0, y: 0 };
-  private tapMoved = false;
   private readonly onMoveJoyDown: (event: PointerEvent) => void;
   private readonly onLookJoyDown: (event: PointerEvent) => void;
-
-  /** Fired on a short tap on open screen (possess a piece under the crosshair). */
-  onTap: (() => void) | null = null;
 
   /** Fired when the player hits pause. */
   onPause: (() => void) | null = null;
@@ -43,7 +36,6 @@ export class TouchControls {
     root: HTMLElement,
   ) {
     this.root = root;
-    this.tapZone = root.querySelector('#tap-zone') as HTMLElement;
 
     const moveBase = root.querySelector('#move-joystick .joystick-base') as HTMLElement;
     const moveStick = root.querySelector('#move-joystick .joystick-stick') as HTMLElement;
@@ -73,7 +65,6 @@ export class TouchControls {
     this.onLookJoyDown = (event) => this.onJoystickDown(event, this.lookJoy);
     moveBase.addEventListener('pointerdown', this.onMoveJoyDown);
     lookBase.addEventListener('pointerdown', this.onLookJoyDown);
-    this.tapZone.addEventListener('pointerdown', this.onTapDown);
     this.jumpBtn.addEventListener('pointerdown', this.onJump);
     this.duckBtn.addEventListener('pointerdown', this.onDuckDown);
     this.duckBtn.addEventListener('pointerup', this.onDuckUp);
@@ -100,7 +91,6 @@ export class TouchControls {
   dispose(): void {
     this.moveJoy.base.removeEventListener('pointerdown', this.onMoveJoyDown);
     this.lookJoy.base.removeEventListener('pointerdown', this.onLookJoyDown);
-    this.tapZone.removeEventListener('pointerdown', this.onTapDown);
     this.jumpBtn.removeEventListener('pointerdown', this.onJump);
     this.duckBtn.removeEventListener('pointerdown', this.onDuckDown);
     this.duckBtn.removeEventListener('pointerup', this.onDuckUp);
@@ -120,15 +110,6 @@ export class TouchControls {
     slot.origin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     this.updateJoystick(event.clientX, event.clientY, slot);
     slot.base.setPointerCapture(event.pointerId);
-  };
-
-  private onTapDown = (event: PointerEvent): void => {
-    if (!this.controller.isActive) return;
-    event.preventDefault();
-    this.tapPointerId = event.pointerId;
-    this.tapLast = { x: event.clientX, y: event.clientY };
-    this.tapMoved = false;
-    this.tapZone.setPointerCapture(event.pointerId);
   };
 
   private onJump = (event: PointerEvent): void => {
@@ -162,15 +143,6 @@ export class TouchControls {
     if (event.pointerId === this.lookJoy.pointerId) {
       event.preventDefault();
       this.updateJoystick(event.clientX, event.clientY, this.lookJoy);
-      return;
-    }
-    if (event.pointerId === this.tapPointerId) {
-      event.preventDefault();
-      const dx = event.clientX - this.tapLast.x;
-      const dy = event.clientY - this.tapLast.y;
-      if (Math.abs(dx) > TAP_SLOP_PX || Math.abs(dy) > TAP_SLOP_PX) {
-        this.tapMoved = true;
-      }
     }
   };
 
@@ -181,12 +153,6 @@ export class TouchControls {
     }
     if (event.pointerId === this.lookJoy.pointerId) {
       this.resetJoystick(this.lookJoy);
-      return;
-    }
-    if (event.pointerId === this.tapPointerId) {
-      if (!this.tapMoved) this.onTap?.();
-      this.tapPointerId = null;
-      this.tapMoved = false;
     }
   };
 
@@ -194,7 +160,6 @@ export class TouchControls {
     this.resetJoystick(this.moveJoy);
     this.resetJoystick(this.lookJoy);
     this.controller.setTouchDuck(false);
-    this.tapPointerId = null;
   };
 
   private updateJoystick(clientX: number, clientY: number, slot: JoystickSlot): void {
