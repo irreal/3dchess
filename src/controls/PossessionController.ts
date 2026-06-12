@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
+import { BOARD_SIZE } from '../constants';
 import type { Move } from '../chess/types';
 import { positionAt, tangentAt, type Corridor, type RestPoint } from './corridors';
 
 const GLIDE_SPEED = 3.4; // m/s while walking a corridor
+const FREE_ROAM_MARGIN = 0.35; // keeps the piece's base on the board while roaming
 const RETURN_SPEED = 9; // m/s while retreating to the origin square
 const REST_SNAP_RADIUS = 0.45; // counts as "resting on" a legal square
 const ENTER_SNAP_RADIUS = 0.85; // Enter confirms the nearest square within this
@@ -72,6 +74,10 @@ export class PossessionController {
   private wantCommit = false;
   private eyeHeight = 1.7;
   private readonly basePos = new THREE.Vector3();
+
+  /** Warm-up free roam: WASD walks anywhere on the board, no rails. */
+  private freeRoam = false;
+  private readonly freePos = new THREE.Vector3();
 
   /** Fired when the possessed piece confirms a move. */
   onCommitMove: ((move: Move) => void) | null = null;
@@ -233,6 +239,21 @@ export class PossessionController {
   }
 
   /**
+   * Toggle warm-up free roam: walking ignores corridors and goes anywhere on
+   * the board, and nothing ever commits a move. Turning it off puts the
+   * possessed piece back on its home square.
+   */
+  setFreeRoam(enabled: boolean): void {
+    if (this.freeRoam === enabled) return;
+    this.freeRoam = enabled;
+    this.resetTraversal();
+    this.freePos.copy(this.basePos);
+    if (!enabled && this.possessed && !this.transition) {
+      this.possessed.group.position.set(this.basePos.x, 0, this.basePos.z);
+    }
+  }
+
+  /**
    * Keep the possessed mesh reference fresh (promotion swaps the group) and
    * track eye-height changes. Call once per frame.
    */
@@ -272,16 +293,22 @@ export class PossessionController {
           this.lookY * PossessionController.LOOK_TURN_RATE * delta,
         );
       }
-      this.updateTraversal(delta);
+      if (this.freeRoam) {
+        this.updateFreeRoam(delta);
+      } else {
+        this.updateTraversal(delta);
+      }
     } else {
       this.dwell = 0;
       this.wantCommit = false;
     }
 
     // Glue the piece and the camera to the spot on (or off) the corridor.
-    const pos = this.active
-      ? positionAt(this.active, this.dist, this.tmpPos)
-      : this.tmpPos.copy(this.basePos);
+    const pos = this.freeRoam
+      ? this.tmpPos.copy(this.freePos)
+      : this.active
+        ? positionAt(this.active, this.dist, this.tmpPos)
+        : this.tmpPos.copy(this.basePos);
     possessed.group.position.x = pos.x;
     possessed.group.position.z = pos.z;
     // The eye rides the antics: up with jumps, down (or stretched) with the
@@ -294,6 +321,18 @@ export class PossessionController {
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onWindowBlur);
     this.controls.dispose();
+  }
+
+  /** Warm-up walking: unconstrained on the board plane, clamped to its edges. */
+  private updateFreeRoam(delta: number): void {
+    this.wantCommit = false;
+    const desired = this.desiredDirection();
+    if (!desired) return;
+
+    this.freePos.addScaledVector(desired, GLIDE_SPEED * delta);
+    const bound = BOARD_SIZE / 2 - FREE_ROAM_MARGIN;
+    this.freePos.x = THREE.MathUtils.clamp(this.freePos.x, -bound, bound);
+    this.freePos.z = THREE.MathUtils.clamp(this.freePos.z, -bound, bound);
   }
 
   private updateTraversal(delta: number): void {
@@ -429,6 +468,7 @@ export class PossessionController {
     this.possessed = target;
     target.group.visible = false;
     this.basePos.set(target.group.position.x, 0, target.group.position.z);
+    this.freePos.copy(this.basePos);
     this.eyeHeight = target.eyeHeight;
     this.camera.position.set(this.basePos.x, this.eyeHeight, this.basePos.z);
   }

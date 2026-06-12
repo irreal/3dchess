@@ -37,9 +37,13 @@ full TypeScript types live in [`src/protocol.ts`](src/protocol.ts).
 Client → server:
 
 ```json
+{ "type": "ready" }
 { "type": "move", "move": { "from": "e2", "to": "e4", "promotion": "q" } }
 { "type": "resign" }
 ```
+
+`ready` ends a player's free-roam warm-up phase (one-way). Moves are only
+accepted once both players have sent it.
 
 Server → client:
 
@@ -55,8 +59,9 @@ Server → client:
 
 Every snapshot contains `code`, `fen`, `turn`, `status`
 (`waiting | playing | check | checkmate | stalemate | draw | resigned`),
-`winner` (when over), `history` (SAN list) and `players` (which seats are
-claimed). Moves are rejected until both seats are claimed.
+`winner` (when over), `history` (SAN list), `players` (which seats are
+claimed) and `ready` (per-seat warm-up readiness). Moves are rejected until
+both seats are claimed and both players have sent `ready`.
 
 Reconnecting with the same token is fine at any time; a newer connection for
 a seat replaces the older one.

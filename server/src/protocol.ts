@@ -69,12 +69,15 @@ export interface GameSnapshot {
   history: string[];
   /** Which seats have been claimed. */
   players: { white: boolean; black: boolean };
+  /** Warm-up readiness: chess moves are only accepted once both are true. */
+  ready: { white: boolean; black: boolean };
 }
 
 export type ClientMessage =
   | { type: 'move'; move: MovePayload }
   | { type: 'presence'; presence: PresencePayload }
   | { type: 'rtc'; payload: RtcSignalPayload }
+  | { type: 'ready' }
   | { type: 'resign' };
 
 export type ServerMessage =

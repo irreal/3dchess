@@ -327,6 +327,10 @@ function handleMessage(ws: WebSocket, room: GameRoom, color: Color, message: Cli
       broadcastMove(room, applied);
       break;
     }
+    case 'ready':
+      room.markReady(color);
+      broadcastState(room);
+      break;
     case 'resign':
       room.resign(color);
       broadcastState(room);

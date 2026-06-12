@@ -79,12 +79,18 @@ export interface GameSnapshot {
   /** SAN move list of the whole game; the client replays what it is missing. */
   history: string[];
   players: { white: boolean; black: boolean };
+  /**
+   * Warm-up readiness per seat; the chess game starts once both are true.
+   * Optional so a client can still talk to a server predating the warm-up.
+   */
+  ready?: { white: boolean; black: boolean };
 }
 
 export type ClientMessage =
   | { type: 'move'; move: MovePayload }
   | { type: 'presence'; presence: PresencePayload }
   | { type: 'rtc'; payload: RtcSignalPayload }
+  | { type: 'ready' }
   | { type: 'resign' };
 
 export type ServerMessage =

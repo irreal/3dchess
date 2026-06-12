@@ -29,11 +29,13 @@ function assertThrows(fn: () => void, label: string): void {
   }
 }
 
-/** Fresh room with both seats taken; creator is white. */
+/** Fresh room with both seats taken and both players ready; creator is white. */
 function fullRoom(): { room: GameRoom; white: string; black: string } {
   const room = new GameRoom('TEST42');
   const white = room.join('white').token;
   const black = room.join().token;
+  room.markReady('white');
+  room.markReady('black');
   return { room, white, black };
 }
 
@@ -68,6 +70,23 @@ function fullRoom(): { room: GameRoom; white: string; black: string } {
   assertEqual(room.colorOf(friend.token), 'white', 'other token resolves too');
   assertEqual(room.colorOf('forged-token'), null, 'unknown token resolves to nobody');
   assertEqual(room.colorOf(''), null, 'empty token resolves to nobody');
+}
+
+// --- Warm-up readiness gate ---
+{
+  const room = new GameRoom('TEST42');
+  room.join('white');
+  room.join();
+  assertEqual(room.snapshot().ready.white, false, 'players start not ready');
+  assertThrows(() => room.applyMove('white', { from: 'e2', to: 'e4' }), 'no moves before anyone is ready');
+
+  room.markReady('white');
+  assertEqual(room.snapshot().ready.white, true, 'ready flag is reported in the snapshot');
+  assertThrows(() => room.applyMove('white', { from: 'e2', to: 'e4' }), 'no moves while the opponent is not ready');
+
+  room.markReady('black');
+  const applied = room.applyMove('white', { from: 'e2', to: 'e4' });
+  assertEqual(applied.san, 'e4', 'moves are accepted once both players are ready');
 }
 
 // --- Move authorization ---

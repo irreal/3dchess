@@ -13,6 +13,7 @@ import { PossessionController } from './controls/PossessionController';
 import { TouchControls } from './controls/TouchControls';
 import { buildCorridors } from './controls/corridors';
 import {
+  clearStoredOnlineSession,
   createOnlineGame,
   fetchIceServers,
   getStoredOnlineSession,
@@ -167,6 +168,10 @@ export class Game {
   private online: OnlineClient | null = null;
   private onlineSession: OnlineSession | null = null;
   private opponentJoined = false;
+  /** Warm-up readiness per seat, as reported by the server. */
+  private readyState = { white: false, black: false };
+  /** We sent 'ready' (instant UI feedback before the snapshot echoes back). */
+  private readySent = false;
   /** The opponent's WebSocket is currently up. */
   private opponentPresent = false;
   private serverConnected = false;
@@ -286,6 +291,7 @@ export class Game {
       if (event.repeat || !this.onlineSession) return;
       if (event.code === 'KeyV') void this.toggleCamera();
       if (event.code === 'KeyM') void this.toggleMicrophone();
+      if (event.code === 'Enter') this.sendReady();
     });
 
     this.remoteAudio.autoplay = true;
@@ -353,7 +359,23 @@ export class Game {
       this.scheduleCpuMove();
     }
 
+    document.getElementById('leave-game')?.classList.remove('hidden');
     this.syncAvBar();
+    this.syncReadyUi();
+  }
+
+  /**
+   * Abandon the current game and return to the lobby: forget the online seat
+   * (session token and the ?join= code in the URL), then reload — the page
+   * comes back up on the menu with no game to resume.
+   */
+  private leaveGame(): void {
+    this.online?.close();
+    clearStoredOnlineSession();
+    const url = new URL(window.location.href);
+    url.searchParams.delete('join');
+    history.replaceState(null, '', url);
+    window.location.reload();
   }
 
   /** The color the CPU plays, or null outside CPU mode. */
@@ -369,6 +391,21 @@ export class Game {
   /** Which color's pieces the player may possess right now. */
   private get controlledColor(): PieceColor {
     return this.mode === 'free' ? this.engine.turn : this.playerColor;
+  }
+
+  /**
+   * Online warm-up: from joining until both players tap Ready, pieces roam
+   * the board freely and no chess moves are possible.
+   */
+  private get warmupActive(): boolean {
+    return (
+      this.mode === 'online' && !this.gameOver && !(this.readyState.white && this.readyState.black)
+    );
+  }
+
+  /** We tapped Ready (locally or as confirmed by the server). */
+  private get weAreReady(): boolean {
+    return this.readySent || this.readyState[this.playerColor];
   }
 
   private tick = (): void => {
@@ -420,18 +457,28 @@ export class Game {
    */
   private refreshMoveState(): void {
     const square = coordToSquare(this.possessedCoord);
-    // Online: no walking before the friend joins or after the game ended
-    // server-side (e.g. resignation), even if chess.js still offers moves.
-    const frozen = this.mode === 'online' && (!this.opponentJoined || this.gameOver);
-    this.possessedMoves = frozen ? [] : this.engine.legalMovesFrom(square);
 
-    const corridors = buildCorridors(this.possessedMoves);
-    if (this.possessedMoves.length > 0) {
-      this.moveHighlights.show(square, this.possessedMoves, corridors);
-    } else {
+    if (this.warmupActive) {
+      // Warm-up: no chess yet — walk anywhere, no rails, no highlights.
+      this.possessedMoves = [];
       this.moveHighlights.clear();
+      this.controller.setCorridors([]);
+      this.controller.setFreeRoam(true);
+    } else {
+      this.controller.setFreeRoam(false);
+      // Online: no walking after the game ended server-side (e.g.
+      // resignation), even if chess.js still offers moves.
+      const frozen = this.mode === 'online' && (!this.opponentJoined || this.gameOver);
+      this.possessedMoves = frozen ? [] : this.engine.legalMovesFrom(square);
+
+      const corridors = buildCorridors(this.possessedMoves);
+      if (this.possessedMoves.length > 0) {
+        this.moveHighlights.show(square, this.possessedMoves, corridors);
+      } else {
+        this.moveHighlights.clear();
+      }
+      this.controller.setCorridors(corridors);
     }
-    this.controller.setCorridors(corridors);
 
     this.updateHud();
     this.updateBadge();
@@ -684,7 +731,11 @@ export class Game {
 
   private applyServerState(state: GameSnapshot): void {
     const hadJoined = this.opponentJoined;
+    const wasWarmup = this.warmupActive;
     this.opponentJoined = state.players.white && state.players.black;
+    // Servers predating the warm-up never report readiness: treat the game
+    // as started so the client behaves exactly as before.
+    this.readyState = state.ready ?? { white: true, black: true };
     if (state.status === 'resigned' && state.winner) {
       this.resignWinner = state.winner;
       this.gameOver = true;
@@ -693,13 +744,63 @@ export class Game {
     this.syncToHistory(state.history);
 
     if (this.inGame) {
-      // Unfreeze corridors the moment the friend claims their seat.
-      if (!hadJoined && this.opponentJoined) this.refreshMoveState();
+      if (wasWarmup && !this.warmupActive) {
+        // Both players are ready: leave the warm-up and start the chess game.
+        this.beginChessGame();
+      } else if (!hadJoined && this.opponentJoined) {
+        this.refreshMoveState();
+      }
       this.updateHud();
       this.updateHint();
+      this.syncReadyUi();
     } else {
       this.updateLobbyStatus();
     }
+  }
+
+  /**
+   * Warm-up over: every piece returns to its square (the walked piece snaps
+   * home when free roam ends, the friend's via the crowd system) and the
+   * player leaps back into their king, just like a normal game start.
+   */
+  private beginChessGame(): void {
+    this.readySent = false;
+    this.clearRemoteWalk();
+    this.remoteAntics.attach(null);
+
+    const king = this.engine.kingSquare(this.playerColor);
+    this.possess(squareCoord(king.file, king.rank), false);
+
+    if (this.opponentColor) {
+      const enemyKing = this.engine.kingSquare(this.opponentColor);
+      const enemyKingCoord = squareCoord(enemyKing.file, enemyKing.rank);
+      this.enemyPossessedCoord = enemyKingCoord;
+      const group = this.chessSet.getPiece(enemyKingCoord);
+      if (group) this.enemyMarker.leapTo(group, this.markerHeight('king'));
+    }
+    this.syncReadyUi();
+  }
+
+  /** Tap Ready (button or Enter): ask the server to start the chess game. */
+  private sendReady(): void {
+    if (!this.inGame || !this.warmupActive || this.weAreReady || !this.online) return;
+    this.readySent = true;
+    this.online.send({ type: 'ready' });
+    this.updateHint();
+    this.syncReadyUi();
+  }
+
+  /** Show the Ready button during the online warm-up, reflecting our state. */
+  private syncReadyUi(): void {
+    const button = document.getElementById('ready-button') as HTMLButtonElement | null;
+    if (!button) return;
+    const show = this.inGame && this.warmupActive;
+    button.classList.toggle('hidden', !show);
+    if (!show) return;
+    button.disabled = this.weAreReady;
+    button.textContent = this.weAreReady
+      ? 'Waiting for your friend\u2026'
+      : "I'm ready \u2014 start the game";
   }
 
   // --- Live presence: streaming our movements out -------------------------
@@ -1192,6 +1293,11 @@ export class Game {
       return;
     }
 
+    if (this.warmupActive && this.inGame) {
+      this.hud.textContent = 'Warm-up \u2014 the game starts when both players are ready';
+      return;
+    }
+
     const toMove = capitalize(this.engine.turn) + this.colorTag(this.engine.turn);
     const winner =
       capitalize(oppositeColor(this.engine.turn)) + this.colorTag(oppositeColor(this.engine.turn));
@@ -1240,6 +1346,19 @@ export class Game {
     if (this.mode === 'online') {
       if (!this.serverConnected) {
         this.hint.textContent = 'Connection lost \u2014 reconnecting\u2026';
+        return;
+      }
+      if (this.warmupActive) {
+        if (!this.opponentJoined) {
+          const code = this.onlineSession?.code ?? '';
+          this.hint.textContent = `Warm-up \u2014 roam freely while your friend joins \u00b7 invite code ${code}`;
+        } else if (this.weAreReady) {
+          this.hint.textContent = 'Waiting for your friend to ready up\u2026';
+        } else {
+          this.hint.textContent = this.touchPlay
+            ? 'Warm-up \u2014 walk anywhere, jump into your pieces \u00b7 tap Ready to start the game'
+            : 'Warm-up \u2014 walk anywhere, jump into your pieces \u00b7 Enter or Ready \u2014 start the game';
+        }
         return;
       }
       if (!this.opponentJoined) {
@@ -1466,6 +1585,16 @@ export class Game {
     document.getElementById('av-restart')?.addEventListener('click', (event) => {
       event.stopPropagation();
       this.resetVideoCall(true);
+    });
+
+    document.getElementById('leave-game')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.leaveGame();
+    });
+
+    document.getElementById('ready-button')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.sendReady();
     });
 
     document.getElementById('copy-link')?.addEventListener('click', (event) => {

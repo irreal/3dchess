@@ -7,8 +7,12 @@ const FRAME_PADDING = 0.05;
 
 /** How far in front of the possessed piece the screen floats. */
 const FORWARD_OFFSET = 0.62;
-/** Lift above the piece's eye height, so it reads as a floating projection. */
-const LIFT = 0.28;
+/**
+ * Lift above the piece's eye height, so it reads as a floating projection —
+ * kept small so two same-height pieces meet each other's screens roughly at
+ * eye level instead of both looking up.
+ */
+const LIFT = 0.12;
 
 /**
  * The friendly cartoon face shown while the friend's camera is off or the

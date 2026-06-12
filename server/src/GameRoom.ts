@@ -19,6 +19,8 @@ function opposite(color: Color): Color {
 export class GameRoom {
   private readonly chess = new Chess();
   private readonly tokens: Partial<Record<Color, string>> = {};
+  /** Warm-up gate: chess moves are rejected until both players are ready. */
+  private readonly ready: Record<Color, boolean> = { white: false, black: false };
   private resignedBy: Color | null = null;
   lastActivity = Date.now();
 
@@ -48,9 +50,21 @@ export class GameRoom {
     return null;
   }
 
+  /**
+   * Marks a seat as ready to leave the free-roam warm-up. One-way: once the
+   * chess game has started there is no way back to the warm-up.
+   */
+  markReady(color: Color): void {
+    this.ready[color] = true;
+    this.touch();
+  }
+
   /** Validates and applies a move for the player seated as `color`. */
   applyMove(color: Color, move: MovePayload): AppliedMove {
     this.assertRunning();
+    if (!this.ready.white || !this.ready.black) {
+      throw new GameError('Both players must be ready before the game starts');
+    }
     if (this.turn() !== color) throw new GameError('Not your turn');
 
     let result;
@@ -111,6 +125,7 @@ export class GameRoom {
       winner: this.winner(),
       history: this.chess.history(),
       players: { white: !!this.tokens.white, black: !!this.tokens.black },
+      ready: { ...this.ready },
     };
   }
 
