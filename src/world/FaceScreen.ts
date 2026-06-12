@@ -91,7 +91,6 @@ export class FaceScreen {
   private readonly onVideoStateChange = (): void => this.applyVideoState();
   private readonly tmpDir = new THREE.Vector3();
   private readonly tmpAnchor = new THREE.Vector3();
-  private readonly planeForward = new THREE.Vector3(0, 0, 1);
 
   constructor() {
     this.object.name = 'face-screen';
@@ -127,10 +126,14 @@ export class FaceScreen {
   }
 
   setStream(stream: MediaStream | null): void {
-    if (stream === this.stream) return;
+    // The call reuses one MediaStream object and adds/removes the video track
+    // in place as the friend toggles their camera, so stream identity alone
+    // proves nothing — the track must be re-checked every time.
+    const track = stream?.getVideoTracks()[0] ?? null;
+    if (stream === this.stream && track === this.videoTrack) return;
     this.clearVideoTrackListeners();
     this.stream = stream;
-    this.videoTrack = stream?.getVideoTracks()[0] ?? null;
+    this.videoTrack = track;
     if (this.videoTrack) {
       this.videoTrack.addEventListener('mute', this.onVideoStateChange);
       this.videoTrack.addEventListener('unmute', this.onVideoStateChange);
@@ -206,7 +209,11 @@ export class FaceScreen {
       piecePosition.z,
     );
     this.object.position.copy(this.tmpAnchor).addScaledVector(this.tmpDir, FORWARD_OFFSET);
-    this.object.quaternion.setFromUnitVectors(this.planeForward, this.tmpDir);
+    // Orient from yaw/pitch directly (YXZ: yaw about world up, then pitch)
+    // so the screen never rolls. Deriving the rotation from the gaze vector
+    // via setFromUnitVectors picks the shortest arc, which injects roll and
+    // can leave the screen tilted or upside down for rear-facing directions.
+    this.object.rotation.set(-pitch, yaw, 0, 'YXZ');
   }
 
   setVisible(visible: boolean): void {
