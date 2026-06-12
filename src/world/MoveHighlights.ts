@@ -1,11 +1,16 @@
 import * as THREE from 'three';
 import { SQUARE_SIZE, squareCenter } from '../constants';
 import type { Move, Square } from '../chess/types';
+import type { Corridor } from '../controls/corridors';
+
+/** Width of the translucent lanes drawn along walkable corridors. */
+const STRIP_WIDTH = SQUARE_SIZE * 0.22;
 
 /**
- * Highlights for the currently selected piece: a yellow plane under the
- * selected square, green dots on quiet target squares and red rings on
- * capture squares. Marker meshes are pooled and reused.
+ * Highlights for the currently possessed piece: a yellow plane under its
+ * square, translucent lanes along the walkable corridors (so knight L-paths
+ * are visible), green dots on quiet target squares and red rings on capture
+ * squares. Marker meshes are pooled and reused.
  */
 export class MoveHighlights {
   readonly object: THREE.Group;
@@ -13,9 +18,12 @@ export class MoveHighlights {
   private readonly selectedMesh: THREE.Mesh;
   private readonly dotPool: THREE.Mesh[] = [];
   private readonly ringPool: THREE.Mesh[] = [];
+  private readonly stripPool: THREE.Mesh[] = [];
+  private readonly tmpDir = new THREE.Vector3();
 
   private readonly dotGeometry = new THREE.CircleGeometry(SQUARE_SIZE * 0.18, 24);
   private readonly ringGeometry = new THREE.RingGeometry(SQUARE_SIZE * 0.34, SQUARE_SIZE * 0.44, 32);
+  private readonly stripGeometry = new THREE.PlaneGeometry(1, 1); // scaled per segment
   private readonly dotMaterial = new THREE.MeshBasicMaterial({
     color: 0x33dd77,
     transparent: true,
@@ -26,6 +34,12 @@ export class MoveHighlights {
     color: 0xee4444,
     transparent: true,
     opacity: 0.75,
+    depthWrite: false,
+  });
+  private readonly stripMaterial = new THREE.MeshBasicMaterial({
+    color: 0x55ff99,
+    transparent: true,
+    opacity: 0.15,
     depthWrite: false,
   });
 
@@ -47,12 +61,38 @@ export class MoveHighlights {
     this.object.add(this.selectedMesh);
   }
 
-  show(selected: Square, moves: Move[]): void {
+  show(selected: Square, moves: Move[], corridors: Corridor[] = []): void {
     this.hideMarkers();
 
     const { x, z } = squareCenter(selected.file, selected.rank);
     this.selectedMesh.position.set(x, 0.02, z);
     this.selectedMesh.visible = true;
+
+    let strips = 0;
+    for (const corridor of corridors) {
+      for (let i = 1; i < corridor.points.length; i++) {
+        const a = corridor.points[i - 1];
+        const b = corridor.points[i];
+        this.tmpDir.subVectors(b, a);
+        const length = this.tmpDir.length();
+        if (length < 1e-6) continue;
+        this.tmpDir.divideScalar(length);
+
+        const strip = this.getMarker(this.stripPool, this.stripGeometry, this.stripMaterial, strips++);
+        // Extend past the far end so a knight's two segments join in a clean L.
+        const drawnLength = length + STRIP_WIDTH / 2;
+        strip.scale.set(STRIP_WIDTH, drawnLength, 1);
+        strip.rotation.z = Math.atan2(-this.tmpDir.x, -this.tmpDir.z);
+        // Slightly different height per strip so overlapping translucent
+        // lanes (knight elbows, the shared origin square) don't z-fight.
+        strip.position.set(
+          (a.x + b.x) / 2 + this.tmpDir.x * (STRIP_WIDTH / 4),
+          0.0125 + strips * 0.0004,
+          (a.z + b.z) / 2 + this.tmpDir.z * (STRIP_WIDTH / 4),
+        );
+        strip.visible = true;
+      }
+    }
 
     let dots = 0;
     let rings = 0;
@@ -75,6 +115,7 @@ export class MoveHighlights {
   private hideMarkers(): void {
     for (const marker of this.dotPool) marker.visible = false;
     for (const marker of this.ringPool) marker.visible = false;
+    for (const marker of this.stripPool) marker.visible = false;
   }
 
   private getMarker(

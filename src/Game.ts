@@ -153,12 +153,13 @@ export class Game {
     this.possessedMoves = this.engine.legalMovesFrom(square);
     this.sanCache = null;
 
+    const corridors = buildCorridors(this.possessedMoves);
     if (this.possessedMoves.length > 0) {
-      this.moveHighlights.show(square, this.possessedMoves);
+      this.moveHighlights.show(square, this.possessedMoves, corridors);
     } else {
       this.moveHighlights.clear();
     }
-    this.controller.setCorridors(buildCorridors(this.possessedMoves));
+    this.controller.setCorridors(corridors);
 
     this.updateHud();
     this.updateBadge();

@@ -10,7 +10,9 @@ const ENTER_SNAP_RADIUS = 0.85; // Enter confirms the nearest square within this
 const DWELL_COMMIT_SECONDS = 1.4; // resting this long confirms the move
 const SETTLE_RATE = 6; // how quickly we center on a square while resting
 const EYE_LERP_RATE = 5; // eye height blend (e.g. growing after promotion)
-const MIN_DIR_ALIGNMENT = 0.35; // how aligned input must be to enter a corridor
+const MIN_DIR_ALIGNMENT = 0.2; // how aligned input must be to enter a corridor
+const FULL_SPEED_ALIGNMENT = 0.7; // input within ~45° of the rail glides at full speed
+const HUB_SNAP_RADIUS = 0.6; // near the origin square, mismatched input settles back
 const CORNER_EPS = 0.02; // probe distance around corridor corners
 const HIDE_DISTANCE = 1.0; // hide the target piece when the camera is this close
 
@@ -239,16 +241,26 @@ export class PossessionController {
         ? Math.min(0, desired.dot(tangentAt(this.active, this.dist - CORNER_EPS, this.tmpDir)))
         : 0;
 
+      // Don't punish slightly misaligned input with a crawl: anything within
+      // ~45 degrees of the rail glides at full speed.
       let velocity: number;
       if (ahead >= -behind) {
         this.active = aheadCorridor;
-        velocity = ahead;
+        velocity = Math.min(1, ahead / FULL_SPEED_ALIGNMENT);
       } else {
-        velocity = behind;
+        velocity = Math.max(-1, behind / FULL_SPEED_ALIGNMENT);
       }
 
       const prev = this.dist;
       this.dist = THREE.MathUtils.clamp(this.dist + velocity * GLIDE_SPEED * delta, 0, this.active.length);
+
+      // Input pointing away from this rail while still next to the origin
+      // square: settle back onto it so the corridor the player actually
+      // wants can take over on a following frame.
+      if (velocity === 0 && desired && this.dist < HUB_SNAP_RADIUS) {
+        this.dist = Math.max(0, this.dist - RETURN_SPEED * delta);
+      }
+
       moved = Math.abs(this.dist - prev);
       if (this.dist === 0) this.active = null;
     } else if (desired) {
