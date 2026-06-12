@@ -588,51 +588,60 @@
         will-change: transform;
       }
 
-      #touch-actions {
+      /* Round icon action buttons arranged in an arc around the look (right)
+         joystick — GTA-style — so they never overlap the joysticks the way a
+         centered button row did in portrait. Positions below clear the
+         128px joystick base (top edge ~144px up from the bottom). */
+      .touch-action {
         position: absolute;
-        left: 50%;
-        bottom: max(44px, calc(28px + env(safe-area-inset-bottom)));
-        transform: translateX(-50%);
         display: flex;
-        flex-direction: row;
-        gap: 8px;
-        pointer-events: auto;
-        touch-action: none;
-      }
-
-      #touch-jump,
-      #touch-duck,
-      #touch-pause {
-        min-width: 72px;
-        padding: 14px 18px;
+        align-items: center;
+        justify-content: center;
+        width: 64px;
+        height: 64px;
+        padding: 0;
         border: 2px solid rgba(255, 255, 255, 0.28);
-        border-radius: 14px;
+        border-radius: 50%;
         background: rgba(20, 24, 28, 0.55);
         color: #fff;
-        font: inherit;
-        font-size: 15px;
-        font-weight: 600;
-        letter-spacing: 0.02em;
+        pointer-events: auto;
         touch-action: none;
         user-select: none;
         -webkit-user-select: none;
       }
 
+      .touch-action svg {
+        width: 30px;
+        height: 30px;
+        display: block;
+      }
+
+      .touch-action:active {
+        background: rgba(255, 255, 255, 0.22);
+      }
+
       #touch-jump {
+        right: max(52px, calc(52px + env(safe-area-inset-right)));
+        bottom: max(158px, calc(148px + env(safe-area-inset-bottom)));
         background: rgba(85, 255, 153, 0.18);
         border-color: rgba(85, 255, 153, 0.45);
       }
 
-      #touch-duck:active,
-      #touch-jump:active,
-      #touch-pause:active {
-        background: rgba(255, 255, 255, 0.22);
+      #touch-duck {
+        right: max(132px, calc(132px + env(safe-area-inset-right)));
+        bottom: max(198px, calc(188px + env(safe-area-inset-bottom)));
       }
 
       #touch-pause {
-        min-width: 52px;
-        padding: 10px 14px;
-        font-size: 13px;
+        width: 52px;
+        height: 52px;
+        right: max(64px, calc(64px + env(safe-area-inset-right)));
+        bottom: max(258px, calc(248px + env(safe-area-inset-bottom)));
+      }
+
+      #touch-pause svg {
+        width: 22px;
+        height: 22px;
       }
 
       @media (max-width: 900px), (pointer: coarse) {
@@ -799,8 +808,22 @@
           margin: -22px 0 0 -22px;
         }
 
-        #touch-actions {
-          bottom: max(28px, calc(16px + env(safe-area-inset-bottom)));
+        /* Landscape is short: tuck the action arc to the inner-left of the
+           (smaller, 108px) look joystick instead of stacking it upward, so it
+           stays clear of the top HUD, ready button and self-view. */
+        #touch-jump {
+          right: max(132px, calc(132px + env(safe-area-inset-right)));
+          bottom: max(24px, calc(16px + env(safe-area-inset-bottom)));
+        }
+
+        #touch-duck {
+          right: max(150px, calc(150px + env(safe-area-inset-right)));
+          bottom: max(104px, calc(96px + env(safe-area-inset-bottom)));
+        }
+
+        #touch-pause {
+          right: max(226px, calc(226px + env(safe-area-inset-right)));
+          bottom: max(40px, calc(32px + env(safe-area-inset-bottom)));
         }
 
         #piece-badge,
@@ -892,11 +915,24 @@
           <div class="joystick-stick"></div>
         </div>
       </div>
-      <div id="touch-actions">
-        <button id="touch-pause" type="button" aria-label="Pause">Pause</button>
-        <button id="touch-jump" type="button">Jump</button>
-        <button id="touch-duck" type="button">Duck</button>
-      </div>
+      <button id="touch-jump" class="touch-action" type="button" aria-label="Jump">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 19V5" />
+          <path d="M5 12l7-7 7 7" />
+        </svg>
+      </button>
+      <button id="touch-duck" class="touch-action" type="button" aria-label="Duck">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 5v14" />
+          <path d="M5 12l7 7 7-7" />
+        </svg>
+      </button>
+      <button id="touch-pause" class="touch-action" type="button" aria-label="Pause">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <rect x="6" y="5" width="4" height="14" rx="1" />
+          <rect x="14" y="5" width="4" height="14" rx="1" />
+        </svg>
+      </button>
     </div>
     <div id="overlay" class="hidden">
       <h1>Paused</h1>
