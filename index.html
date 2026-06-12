@@ -106,6 +106,77 @@
         color: #b6c4cf;
       }
 
+      #menu .modes.hidden,
+      #online-panel.hidden,
+      #invite-row.hidden,
+      #online-start.hidden {
+        display: none;
+      }
+
+      #online-panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        margin: 10px 0 6px;
+      }
+
+      #online-status {
+        color: #dbe7f0;
+        font-size: 16px;
+        max-width: min(80vw, 520px);
+      }
+
+      #invite-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      #invite-link {
+        width: min(60vw, 380px);
+        padding: 10px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font:
+          14px ui-monospace,
+          monospace;
+      }
+
+      #copy-link,
+      #online-start {
+        padding: 10px 18px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+
+      #copy-link:hover,
+      #online-start:hover {
+        background: rgba(255, 255, 255, 0.18);
+        border-color: rgba(255, 255, 255, 0.55);
+      }
+
+      #online-start {
+        padding: 14px 28px;
+        background: rgba(85, 255, 153, 0.14);
+        border-color: rgba(85, 255, 153, 0.45);
+      }
+
+      #online-start:hover {
+        background: rgba(85, 255, 153, 0.26);
+        border-color: rgba(85, 255, 153, 0.8);
+      }
+
       #hud {
         position: fixed;
         top: 16px;
@@ -211,6 +282,63 @@
         letter-spacing: 0.12em;
       }
 
+      /* Screen-edge arrow pointing toward the CPU's possession marker when
+         it is out of view. Positioned and rotated from JS via CSS vars. */
+      #enemy-pointer {
+        position: fixed;
+        left: 0;
+        top: 0;
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        transform: translate(var(--x, -100px), var(--y, -100px)) translate(-50%, -50%)
+          rotate(var(--angle, 0rad));
+        pointer-events: none;
+        user-select: none;
+        z-index: 6;
+      }
+
+      #enemy-pointer.hidden {
+        display: none;
+      }
+
+      #enemy-pointer .bubble {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        background: rgba(150, 28, 24, 0.85);
+        border: 2px solid rgba(255, 125, 110, 0.9);
+        box-shadow: 0 0 16px rgba(255, 70, 50, 0.55);
+      }
+
+      #enemy-pointer .glyph {
+        font-family: serif;
+        font-size: 26px;
+        line-height: 1;
+        /* Keep the piece icon upright while the pointer rotates. */
+        transform: rotate(calc(var(--angle, 0rad) * -1));
+      }
+
+      #enemy-pointer.white .glyph {
+        color: #f0e9dc;
+        text-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+      }
+
+      #enemy-pointer.black .glyph {
+        color: #262220;
+        text-shadow: 0 0 2px rgba(255, 255, 255, 0.85);
+      }
+
+      #enemy-pointer .arrow {
+        color: #ff6f5e;
+        font-size: 17px;
+        line-height: 1;
+        text-shadow: 0 0 8px rgba(255, 70, 50, 0.8);
+      }
+
       #hint {
         position: fixed;
         bottom: 28px;
@@ -241,6 +369,10 @@
       </span>
     </div>
     <div id="hint">Look at a white piece and click to take control</div>
+    <div id="enemy-pointer" class="hidden black">
+      <span class="bubble"><span class="glyph" id="enemy-pointer-glyph">&#x265A;</span></span>
+      <span class="arrow">&#x25B6;</span>
+    </div>
     <div id="menu">
       <h1>3D Chess</h1>
       <p>You play from inside your pieces — the game starts in your king.</p>
@@ -248,6 +380,15 @@
         <button id="mode-free">Free Play<small>control both sides</small></button>
         <button id="mode-cpu-white">Play as White<small>CPU plays Black</small></button>
         <button id="mode-cpu-black">Play as Black<small>CPU plays White</small></button>
+        <button id="mode-online">Play Online<small>invite a friend</small></button>
+      </div>
+      <div id="online-panel" class="hidden">
+        <p id="online-status">Creating game&hellip;</p>
+        <div id="invite-row" class="hidden">
+          <input id="invite-link" readonly />
+          <button id="copy-link">Copy</button>
+        </div>
+        <button id="online-start" class="hidden">Enter the game</button>
       </div>
       <p>
         Mouse — look &nbsp;·&nbsp; Click a friendly piece — jump into it<br />

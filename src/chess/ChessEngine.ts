@@ -85,6 +85,16 @@ export class ChessEngine {
     throw new Error(`No ${color} king on the board`);
   }
 
+  /**
+   * Converts a SAN string for the current position into the rich Move shape
+   * (used to replay moves received from the multiplayer server). Searched
+   * unfiltered, so remote underpromotions convert too.
+   */
+  moveFromSan(san: string): Move | null {
+    const match = this.chess.moves({ verbose: true }).find((m) => m.san === san);
+    return match ? convertMove(match) : null;
+  }
+
   /** Applies a move previously obtained from legalMovesFrom(). */
   makeMove(move: Move): void {
     this.chess.move({

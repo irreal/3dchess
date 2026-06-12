@@ -168,6 +168,26 @@ assertEqual(perft(start, 4), 197281, 'perft(4) = 197281');
   assertEqual(engine.kingSquare('white').file, 6, 'king lookup follows castling');
 }
 
+// --- SAN -> Move conversion (used to replay multiplayer server history) ---
+{
+  const engine = new ChessEngine();
+  const e4 = engine.moveFromSan('e4');
+  assertEqual(e4?.from.file, 4, 'moveFromSan: pawn push origin file');
+  assertEqual(e4?.isDoublePush, true, 'moveFromSan: double push flagged');
+  assertEqual(engine.moveFromSan('Ke2'), null, 'moveFromSan: illegal SAN yields null');
+
+  // Castling SAN converts with the rook path attached.
+  play(engine, ['e2', 'e4'], ['e7', 'e5'], ['g1', 'f3'], ['b8', 'c6'], ['f1', 'c4'], ['f8', 'c5']);
+  const castle = engine.moveFromSan('O-O');
+  assertEqual(castle?.castle, 'kingside', 'moveFromSan: castling converts');
+  assertEqual(castle?.rookTo?.file, 5, 'moveFromSan: rook path attached');
+}
+{
+  // Underpromotions are reachable via SAN even though the UI auto-queens.
+  const engine = new ChessEngine('k7/7P/8/8/8/8/8/4K3 w - - 0 1');
+  assertEqual(engine.moveFromSan('h8=N')?.promotion, 'knight', 'moveFromSan: underpromotion');
+}
+
 // --- End states from chess.js ---
 {
   const stalemate = new ChessEngine('7k/5Q2/6K1/8/8/8/8/8 b - - 0 1');

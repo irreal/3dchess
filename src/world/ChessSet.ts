@@ -58,6 +58,7 @@ export class ChessSet {
   private readonly crowdDir = new THREE.Vector3(); // last direction of travel
   private crowdActive = false;
   private crowdExclude: string | null = null;
+  private remoteWalkExclude: string | null = null;
 
   constructor() {
     this.object = new THREE.Group();
@@ -147,6 +148,14 @@ export class ChessSet {
     this.crowdExclude = excludeCoord;
   }
 
+  /**
+   * Square whose piece is currently driven by the opponent's live walk
+   * stream, so the crowd system must not snap it back onto its home square.
+   */
+  setRemoteWalkExclude(coord: string | null): void {
+    this.remoteWalkExclude = coord;
+  }
+
   /** Advances piece animations and crowd dodging. Call once per frame. */
   update(delta: number): void {
     for (let i = this.animations.length - 1; i >= 0; i--) {
@@ -177,7 +186,8 @@ export class ChessSet {
     const animating = new Set(this.animations.map((animation) => animation.object));
 
     for (const [coord, piece] of this.pieces) {
-      if (coord === this.crowdExclude || animating.has(piece)) continue;
+      if (coord === this.crowdExclude || coord === this.remoteWalkExclude || animating.has(piece))
+        continue;
 
       const file = coord.charCodeAt(0) - 97;
       const rank = Number(coord.slice(1)) - 1;

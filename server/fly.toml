@@ -1,0 +1,16 @@
+app = "3dchess-server"
+primary_region = "fra"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Games live in memory, so the machine only stops when no clients are
+  # connected; an open WebSocket keeps it (and the games) alive.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

@@ -1,0 +1,24 @@
+{
+  "name": "3dchess-server",
+  "version": "1.0.0",
+  "description": "Authoritative multiplayer server for the 3D chess game",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "tsx tests/game.test.ts"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.0",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.3"
+  }
+}
