@@ -1656,7 +1656,7 @@ export class Game {
   }
 
   private addLights(): void {
-    const ambient = new THREE.HemisphereLight(0xbfd6e8, 0x4a3b2a, 0.7);
+    const ambient = new THREE.HemisphereLight(0xbfd6e8, 0x6b5640, 0.9);
     this.scene.add(ambient);
 
     const sun = new THREE.DirectionalLight(0xfff2dd, 2.2);

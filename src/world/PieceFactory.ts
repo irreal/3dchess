@@ -30,6 +30,52 @@ function latheMesh(profile: ProfilePoint[]): THREE.Mesh {
   return new THREE.Mesh(geometry);
 }
 
+const textureLoader = new THREE.TextureLoader();
+
+/**
+ * Wood textures are CC0 (public domain) from ambientCG:
+ * white pieces use "Wood068" (light beech), black pieces use "Wood066" (walnut).
+ */
+function woodMaterial(
+  base: string,
+  tint: number,
+  roughness: number,
+  /**
+   * Lifts shadow detail by letting the grain texture glow faintly, so dark
+   * woods never collapse into a flat silhouette on the unlit side. 0 disables.
+   */
+  emissiveLift = 0,
+): THREE.MeshStandardMaterial {
+  const color = textureLoader.load(`textures/${base}_color.jpg`);
+  const rough = textureLoader.load(`textures/${base}_rough.jpg`);
+  const normal = textureLoader.load(`textures/${base}_normal.jpg`);
+
+  color.colorSpace = THREE.SRGBColorSpace;
+
+  // Rotate the grain 90° so it runs vertically along each turned piece, and
+  // repeat it so the grain reads at the scale of a hand-sized chess piece.
+  for (const tex of [color, rough, normal]) {
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.center.set(0.5, 0.5);
+    tex.rotation = Math.PI / 2;
+    tex.repeat.set(2, 1.5);
+    tex.anisotropy = 8;
+  }
+
+  return new THREE.MeshStandardMaterial({
+    map: color,
+    roughnessMap: rough,
+    normalMap: normal,
+    color: tint,
+    roughness,
+    metalness: 0,
+    emissive: new THREE.Color(tint),
+    emissiveMap: emissiveLift > 0 ? color : null,
+    emissiveIntensity: emissiveLift,
+  });
+}
+
 /**
  * Builds human-sized procedural chess pieces. Geometry is created once per
  * piece type and shared between all instances via clone().
@@ -41,8 +87,11 @@ export class PieceFactory {
   private readonly templates = new Map<PieceType, THREE.Group>();
 
   private readonly materials: Record<PieceColor, THREE.MeshStandardMaterial> = {
-    white: new THREE.MeshStandardMaterial({ color: 0xe8e0d0, roughness: 0.3, metalness: 0.05 }),
-    black: new THREE.MeshStandardMaterial({ color: 0x262220, roughness: 0.35, metalness: 0.15 }),
+    // Light beech, kept close to its natural tone.
+    white: woodMaterial('wood_white', 0xfff3e0, 0.85),
+    // Walnut: lighter tint + lower roughness (more highlights) + a faint
+    // self-lit grain so the dark side stays readable under this lighting.
+    black: woodMaterial('wood_black', 0xb07d52, 0.6, 0.22),
   };
 
   create(type: PieceType, color: PieceColor): THREE.Group {
