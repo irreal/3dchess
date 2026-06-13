@@ -2,13 +2,26 @@ import * as THREE from 'three';
 import { BOARD_SIZE, BORDER_WIDTH, GROUND_Y } from '../constants';
 import { PieceFactory, type PieceColor } from './PieceFactory';
 
-const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY as string | undefined;
-
-/** How many GIFs to pull and share across the crowd's billboards. */
-const SCREEN_POOL_SIZE = 14;
-
-/** Search term for the crowd's GIFs, so the screens stay on theme. */
-const GIPHY_QUERY = 'chess';
+/**
+ * Looping clips bundled in `public/gifs/` that play on the crowd's billboards
+ * (converted from GIFs to compressed h264 mp4 so they animate as video
+ * textures). Vite serves the `public/` folder at the site root, so these are
+ * referenced by relative path (URL-encoded to survive the spaces in their
+ * names).
+ */
+const CLIP_FILES = [
+  'Chess Boardgames GIF by NETFLIX.mp4',
+  'Chess Gif Edit GIF.mp4',
+  'Chess GIF.mp4',
+  'Comedy Chess GIF.mp4',
+  'Gothamchess GIF.mp4',
+  'Happy Well Done GIF by Chess.com.mp4',
+  'Magnus Carlsen Chess GIF by TeamLiquid.mp4',
+  'Magnus Carlsen Chess GIF.mp4',
+  'Smirk Chess GIF.mp4',
+  'Spin Chess GIF by Feliks Tomasz Konczakowski.mp4',
+  'winning independence day GIF by IFC.mp4',
+];
 
 /** Crowd layout: tiered rows of pawns down each long side of the board. */
 const ROWS = 2;
@@ -46,9 +59,9 @@ interface Billboard {
 /**
  * A crowd of pawn spectators lining both sides of the board, each with a
  * little screen floating in front of its face — mirroring the player's own
- * face screen. The screens loop random GIFs pulled from Giphy (shared across
- * the crowd from a small pool), falling back to colorful placeholders when no
- * API key is configured or the fetch fails.
+ * face screen. The screens loop chess clips bundled in `public/gifs/` (shared
+ * across the crowd from a small pool), falling back to colorful placeholders
+ * until the clips start playing.
  */
 export class Audience {
   readonly object = new THREE.Group();
@@ -67,9 +80,9 @@ export class Audience {
     this.object.name = 'audience';
 
     this.buildStands();
-    // Show placeholders immediately, then upgrade to GIFs once they load.
+    // Show placeholders immediately, then upgrade to clips once they load.
     this.assignScreens(this.buildPlaceholderPool());
-    void this.loadGiphyScreens();
+    this.loadClipScreens();
   }
 
   /** Gentle floating bob so the screens feel alive. */
@@ -167,19 +180,21 @@ export class Audience {
     return PLACEHOLDER_BG.map((bg, i) => createPlaceholderTexture(bg, PLACEHOLDER_EMOJI[i]));
   }
 
-  private async loadGiphyScreens(): Promise<void> {
-    const urls = await fetchGiphyMp4s(SCREEN_POOL_SIZE);
-    if (urls.length === 0) return;
-
+  /**
+   * Load each bundled clip into a muted, looping `<video>` and wrap it in a
+   * `VideoTexture` that animates automatically. Screens are upgraded to clips
+   * as each one starts playing.
+   */
+  private loadClipScreens(): void {
     const pool: THREE.Texture[] = [];
-    for (const url of urls) {
+    for (const file of CLIP_FILES) {
       const video = document.createElement('video');
-      video.src = url;
-      video.crossOrigin = 'anonymous';
+      video.src = `gifs/${encodeURIComponent(file)}`;
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
       video.autoplay = true;
+      video.preload = 'auto';
       void video.play().catch(() => {});
       this.videos.push(video);
 
@@ -190,47 +205,6 @@ export class Audience {
 
     this.assignScreens(pool);
   }
-}
-
-/** Search a batch of on-theme GIFs and return their looping mp4 URLs. */
-async function fetchGiphyMp4s(limit: number): Promise<string[]> {
-  if (!GIPHY_API_KEY) return [];
-  try {
-    // A random offset varies the set across reloads instead of always
-    // returning the same top "chess" results.
-    const offset = Math.floor(Math.random() * 30);
-    const url =
-      `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}` +
-      `&q=${encodeURIComponent(GIPHY_QUERY)}&limit=${limit}&offset=${offset}&rating=pg-13`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const json = (await res.json()) as { data?: GiphyGif[] };
-    const urls: string[] = [];
-    for (const gif of json.data ?? []) {
-      const images = gif.images ?? {};
-      const mp4 =
-        images.downsized_small?.mp4 ??
-        images.looping?.mp4 ??
-        images.original_mp4?.mp4 ??
-        images.original?.mp4;
-      if (mp4) urls.push(mp4);
-    }
-    return urls;
-  } catch {
-    return [];
-  }
-}
-
-interface GiphyRendition {
-  mp4?: string;
-}
-interface GiphyGif {
-  images?: {
-    downsized_small?: GiphyRendition;
-    looping?: GiphyRendition;
-    original_mp4?: GiphyRendition;
-    original?: GiphyRendition;
-  };
 }
 
 function createPlaceholderTexture(

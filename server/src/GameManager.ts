@@ -11,9 +11,9 @@ const DEFAULT_MAX_IDLE_MS = 24 * 60 * 60 * 1000;
 export class GameManager {
   private readonly games = new Map<string, GameRoom>();
 
-  create(): GameRoom {
+  create(timeControlSeconds = 0): GameRoom {
     const code = this.generateCode();
-    const room = new GameRoom(code);
+    const room = new GameRoom(code, timeControlSeconds);
     this.games.set(code, room);
     return room;
   }

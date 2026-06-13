@@ -22,9 +22,27 @@ export class GameRoom {
   /** Warm-up gate: chess moves are rejected until both players are ready. */
   private readonly ready: Record<Color, boolean> = { white: false, black: false };
   private resignedBy: Color | null = null;
+
+  /** Authoritative clock: per-player remaining ms and when the running side's
+   * turn began (null while paused — warm-up, game over). 0 base = no clock. */
+  private readonly baseMs: number;
+  private readonly remaining: Record<Color, number>;
+  private turnStartedAt: number | null = null;
+  private timedOutBy: Color | null = null;
+
   lastActivity = Date.now();
 
-  constructor(readonly code: string) {}
+  constructor(
+    readonly code: string,
+    timeControlSeconds = 0,
+  ) {
+    this.baseMs = Math.max(0, Math.floor(timeControlSeconds)) * 1000;
+    this.remaining = { white: this.baseMs, black: this.baseMs };
+  }
+
+  private get clockEnabled(): boolean {
+    return this.baseMs > 0;
+  }
 
   /** Claims a free seat and returns the secret token identifying it. */
   join(preferred?: Color): { token: string; color: Color } {
@@ -56,6 +74,10 @@ export class GameRoom {
    */
   markReady(color: Color): void {
     this.ready[color] = true;
+    // The chess game (and the clock) begins the instant both seats are ready.
+    if (this.clockEnabled && this.ready.white && this.ready.black && this.turnStartedAt === null) {
+      this.turnStartedAt = Date.now();
+    }
     this.touch();
   }
 
@@ -67,12 +89,26 @@ export class GameRoom {
     }
     if (this.turn() !== color) throw new GameError('Not your turn');
 
+    // Charge the mover for the time they spent thinking. A move arriving after
+    // the flag already fell is a loss on time, not a legal move.
+    if (this.clockEnabled && this.turnStartedAt !== null) {
+      const now = Date.now();
+      this.remaining[color] = Math.max(0, this.remaining[color] - (now - this.turnStartedAt));
+      if (this.remaining[color] <= 0) {
+        this.timedOutBy = color;
+        this.touch();
+        throw new GameError('Out of time');
+      }
+    }
+
     let result;
     try {
       result = this.chess.move({ from: move.from, to: move.to, promotion: move.promotion });
     } catch {
       throw new GameError(`Illegal move ${move.from}-${move.to}`);
     }
+    // The opponent's clock starts now.
+    if (this.clockEnabled) this.turnStartedAt = Date.now();
     this.touch();
     return {
       from: result.from,
@@ -81,6 +117,35 @@ export class GameRoom {
       san: result.san,
       color,
     };
+  }
+
+  /**
+   * Flag the active side if their clock has run out while idle (no move to
+   * trigger the charge in {@link applyMove}). Returns true when this call
+   * ended the game, so the caller can broadcast the new state.
+   */
+  checkTimeout(now = Date.now()): boolean {
+    if (!this.clockEnabled || this.turnStartedAt === null || this.timedOutBy) return false;
+    if (this.status() !== 'playing' && this.status() !== 'check') return false;
+    const active = this.turn();
+    if (this.remaining[active] - (now - this.turnStartedAt) > 0) return false;
+    this.remaining[active] = 0;
+    this.timedOutBy = active;
+    this.touch();
+    return true;
+  }
+
+  /** Remaining ms per side, current as of `now` (the active side ticks down). */
+  private clockNow(now = Date.now()): Record<Color, number> {
+    const snapshot = { white: this.remaining.white, black: this.remaining.black };
+    if (this.clockEnabled && this.turnStartedAt !== null && !this.timedOutBy) {
+      const status = this.status();
+      if (status === 'playing' || status === 'check') {
+        const active = this.turn();
+        snapshot[active] = Math.max(0, snapshot[active] - (now - this.turnStartedAt));
+      }
+    }
+    return snapshot;
   }
 
   resign(color: Color): void {
@@ -100,6 +165,7 @@ export class GameRoom {
   }
 
   status(): GameStatus {
+    if (this.timedOutBy) return 'timeout';
     if (this.resignedBy) return 'resigned';
     if (!this.tokens.white || !this.tokens.black) return 'waiting';
     if (this.chess.isCheckmate()) return 'checkmate';
@@ -111,12 +177,14 @@ export class GameRoom {
   }
 
   winner(): Color | undefined {
+    if (this.timedOutBy) return opposite(this.timedOutBy);
     if (this.resignedBy) return opposite(this.resignedBy);
     if (this.chess.isCheckmate()) return opposite(this.turn());
     return undefined;
   }
 
   snapshot(): GameSnapshot {
+    const clock = this.clockNow();
     return {
       code: this.code,
       fen: this.chess.fen(),
@@ -126,6 +194,8 @@ export class GameRoom {
       history: this.chess.history(),
       players: { white: !!this.tokens.white, black: !!this.tokens.black },
       ready: { ...this.ready },
+      timeControl: Math.floor(this.baseMs / 1000),
+      clock,
     };
   }
 

@@ -31,8 +31,12 @@ export interface OnlineSession {
   color: PieceColor;
 }
 
-export async function createOnlineGame(): Promise<OnlineSession> {
-  const session = await post('/api/games');
+/**
+ * Create a new online game. The host's `timeControlSeconds` (0 = no clock) is
+ * stored server-side and applied to both players via the game snapshot.
+ */
+export async function createOnlineGame(timeControlSeconds = 0): Promise<OnlineSession> {
+  const session = await postWithBody('/api/games', { timeControl: timeControlSeconds });
   saveSession(session);
   return session;
 }

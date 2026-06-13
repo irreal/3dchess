@@ -239,6 +239,11 @@
         border-color: rgba(85, 255, 153, 0.6);
       }
 
+      .time-control-note {
+        font-size: 12px;
+        color: #9fb2c0;
+      }
+
       #cpu-difficulty.hidden {
         display: none;
       }
@@ -383,6 +388,64 @@
         letter-spacing: 0.02em;
         pointer-events: none;
         z-index: 5;
+      }
+
+      /* Two-sided chess clock, centered under the turn HUD. */
+      #clocks {
+        position: fixed;
+        top: 52px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 10px;
+        z-index: 5;
+        pointer-events: none;
+      }
+
+      #clocks.hidden {
+        display: none;
+      }
+
+      #clocks .clock {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+        min-width: 74px;
+        padding: 5px 14px;
+        border-radius: 12px;
+        background: rgba(20, 24, 28, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        color: #fff;
+      }
+
+      #clocks .clock-label {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #9fb2c0;
+      }
+
+      #clocks .clock-time {
+        font-variant-numeric: tabular-nums;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      /* The side to move glows; either side turns red under 20 seconds. */
+      #clocks .clock.active {
+        border-color: rgba(85, 255, 153, 0.7);
+        background: rgba(85, 255, 153, 0.16);
+      }
+
+      #clocks .clock.low .clock-time {
+        color: #ff7d6e;
+      }
+
+      #clocks .clock.active.low {
+        border-color: rgba(255, 125, 110, 0.8);
+        background: rgba(255, 96, 80, 0.2);
       }
 
       #crosshair {
@@ -901,6 +964,20 @@
           text-align: center;
         }
 
+        #clocks {
+          top: max(48px, calc(42px + env(safe-area-inset-top)));
+          gap: 8px;
+        }
+
+        #clocks .clock {
+          min-width: 60px;
+          padding: 4px 10px;
+        }
+
+        #clocks .clock-time {
+          font-size: 17px;
+        }
+
         #piece-badge {
           left: max(12px, env(safe-area-inset-left));
           bottom: max(150px, calc(16px + env(safe-area-inset-bottom)));
@@ -1021,6 +1098,16 @@
       <button id="game-mic-toggle" type="button">Mic</button>
     </div>
     <div id="hud">White to move</div>
+    <div id="clocks" class="hidden">
+      <div class="clock" id="clock-black">
+        <span class="clock-label">Black</span>
+        <span class="clock-time">0:00</span>
+      </div>
+      <div class="clock" id="clock-white">
+        <span class="clock-label">White</span>
+        <span class="clock-time">0:00</span>
+      </div>
+    </div>
     <button id="ready-button" class="hidden" type="button">I'm ready &mdash; start the game</button>
     <div id="crosshair"></div>
     <div id="dwell-ring"></div>
@@ -1084,6 +1171,18 @@
           <button data-level="4" type="button">Advanced</button>
           <button data-level="5" type="button">Expert</button>
         </div>
+      </div>
+      <div id="time-control" class="difficulty">
+        <span class="difficulty-label">Clock — time per player</span>
+        <div class="difficulty-options">
+          <button data-seconds="0" type="button">Off</button>
+          <button data-seconds="180" type="button">3 min</button>
+          <button data-seconds="300" type="button">5 min</button>
+          <button data-seconds="600" type="button" class="active">10 min</button>
+          <button data-seconds="900" type="button">15 min</button>
+          <button data-seconds="1800" type="button">30 min</button>
+        </div>
+        <span class="time-control-note">In online games the host's clock applies to both players.</span>
       </div>
       <button id="resume-online" class="hidden">Resume online game</button>
       <div id="online-panel" class="hidden">

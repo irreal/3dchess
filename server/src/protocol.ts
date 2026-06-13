@@ -14,7 +14,8 @@ export type GameStatus =
   | 'checkmate'
   | 'stalemate'
   | 'draw'
-  | 'resigned';
+  | 'resigned'
+  | 'timeout'; // a player ran out of time on the clock
 
 /** A move as requested by a client. */
 export interface MovePayload {
@@ -71,6 +72,10 @@ export interface GameSnapshot {
   players: { white: boolean; black: boolean };
   /** Warm-up readiness: chess moves are only accepted once both are true. */
   ready: { white: boolean; black: boolean };
+  /** Per-player base time in seconds, set by the host (0 = no clock). */
+  timeControl: number;
+  /** Remaining milliseconds per player, current as of this snapshot. */
+  clock: { white: number; black: number };
 }
 
 export type ClientMessage =

@@ -7,6 +7,8 @@ import type { AppliedMove, ClientMessage, Color, ServerMessage } from './protoco
 
 const PORT = Number(process.env.PORT ?? 8080);
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+/** How often to check active games for a flag fall (clock reaching zero). */
+const CLOCK_TICK_MS = 1000;
 const MAX_BODY_BYTES = 16 * 1024;
 
 /**
@@ -103,7 +105,7 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/api/games') {
       const body = await readJsonBody(req);
-      const room = manager.create();
+      const room = manager.create(parseTimeControl(body));
       const { token, color } = room.join(parsePreferredColor(body));
       json(res, 201, { code: room.code, token, color });
       return;
@@ -154,6 +156,13 @@ function parsePreferredColor(body: unknown): Color {
   if (color === 'black' || color === 'white') return color;
   if (color === 'random') return Math.random() < 0.5 ? 'white' : 'black';
   return 'white';
+}
+
+/** Per-player base time in seconds, clamped to a sane range (0 = no clock). */
+function parseTimeControl(body: unknown): number {
+  const raw = (body as { timeControl?: unknown } | null)?.timeControl;
+  const seconds = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : 0;
+  return Math.min(3 * 60 * 60, Math.max(0, seconds));
 }
 
 function corsHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -387,6 +396,15 @@ setInterval(() => {
     rtcOutbox.delete(code);
   }
 }, SWEEP_INTERVAL_MS).unref();
+
+// Flag fall: a player can run out of time without moving, so the charge in
+// applyMove never fires. Poll active games and broadcast when a clock expires.
+setInterval(() => {
+  for (const code of seats.keys()) {
+    const room = manager.get(code);
+    if (room && room.checkTimeout()) broadcastState(room);
+  }
+}, CLOCK_TICK_MS).unref();
 
 server.listen(PORT, () => {
   console.log(`3dchess server listening on :${PORT}`);

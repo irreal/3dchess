@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { AILevel } from 'js-chess-engine';
 import { ChessEngine } from './chess/ChessEngine';
+import { ChessClock } from './chess/ChessClock';
 import type { AiRequest, AiResponse } from './chess/aiWorker';
 import {
   oppositeColor,
@@ -173,6 +174,13 @@ export class Game {
 
   /** CPU difficulty (js-chess-engine AI level 1-5), chosen from the menu. */
   private cpuLevel: AILevel = 3;
+
+  /** Per-player clock and the menu-chosen base time (seconds; 0 = no clock).
+   * In online play the host's choice wins, applied from the server snapshot. */
+  private readonly chessClock = new ChessClock();
+  private timeControlSeconds = 600;
+  /** Winner of a game decided on the clock, for the HUD banner. */
+  private timeoutWinner: PieceColor | null = null;
   /** Worker running the chess AI off the main thread; created on first use. */
   private aiWorker: Worker | null = null;
   /** Monotonic id so stale worker replies (from a prior position) are ignored. */
@@ -254,6 +262,9 @@ export class Game {
   private readonly tmpCamForward = new THREE.Vector3();
 
   private readonly hud: HTMLElement | null;
+  private readonly clocksEl: HTMLElement | null;
+  private readonly clockWhiteEl: HTMLElement | null;
+  private readonly clockBlackEl: HTMLElement | null;
   private readonly badge: HTMLElement | null;
   private readonly badgeGlyph: HTMLElement | null;
   private readonly badgeName: HTMLElement | null;
@@ -337,6 +348,9 @@ export class Game {
     });
 
     this.hud = document.getElementById('hud');
+    this.clocksEl = document.getElementById('clocks');
+    this.clockWhiteEl = document.getElementById('clock-white');
+    this.clockBlackEl = document.getElementById('clock-black');
     this.enemyPointer = document.getElementById('enemy-pointer');
     this.enemyPointerGlyph = document.getElementById('enemy-pointer-glyph');
     this.enemyPointerVideo = document.getElementById(
@@ -366,8 +380,13 @@ export class Game {
     this.mode = mode;
     this.playerColor = mode === 'free' ? 'white' : playerColor;
     this.inGame = true;
+    this.timeoutWinner = null;
     this.lastMoveArrow.hide();
     if (mode === 'online') markOnlineInGame(true);
+
+    // Local modes use the menu's time control directly; online play adopts the
+    // host's choice from the server snapshot instead (see applyServerState).
+    if (mode !== 'online') this.chessClock.configure(this.timeControlSeconds);
 
     // King looked up (not hardcoded) because an online game may resume mid-way.
     const king = this.engine.kingSquare(this.playerColor);
@@ -482,6 +501,7 @@ export class Game {
     this.remoteAntics.update(delta);
     this.updateFaceScreen(delta);
     this.audience.update(delta);
+    this.updateClock(delta);
     this.maybeSendPresence();
     this.syncPossessed();
     this.syncEnemyMarker();
@@ -923,6 +943,17 @@ export class Game {
       this.resignWinner = state.winner;
       this.gameOver = true;
     }
+    if (state.status === 'timeout' && state.winner) {
+      this.timeoutWinner = state.winner;
+      this.gameOver = true;
+    }
+
+    // The host's clock is authoritative: adopt its base time and re-sync the
+    // remaining times so both players' clocks agree at every server update.
+    if (state.timeControl !== undefined && this.chessClock.baseSeconds !== state.timeControl) {
+      this.chessClock.configure(state.timeControl);
+    }
+    if (state.clock) this.chessClock.setRemaining(state.clock.white, state.clock.black);
 
     this.syncToHistory(state.history);
 
@@ -1489,6 +1520,13 @@ export class Game {
   private updateHud(): void {
     if (!this.hud) return;
 
+    if (this.timeoutWinner) {
+      const loser = oppositeColor(this.timeoutWinner);
+      this.hud.textContent = `${capitalize(loser)}${this.colorTag(loser)} ran out of time \u2014 ${capitalize(this.timeoutWinner)}${this.colorTag(this.timeoutWinner)} wins`;
+      this.gameOver = true;
+      return;
+    }
+
     if (this.resignWinner) {
       this.hud.textContent = `${capitalize(this.resignWinner)}${this.colorTag(this.resignWinner)} wins by resignation`;
       this.gameOver = true;
@@ -1524,6 +1562,47 @@ export class Game {
         this.gameOver = true;
         break;
     }
+  }
+
+  /** Whose clock should be ticking right now, or null when the clock is paused. */
+  private clockRunningColor(): PieceColor | null {
+    if (!this.inGame || this.gameOver || !this.chessClock.enabled) return null;
+    if (this.mode === 'online' && (this.warmupActive || !this.opponentJoined)) return null;
+    const status = this.engine.getStatus();
+    if (status !== 'playing' && status !== 'check') return null;
+    return this.engine.turn;
+  }
+
+  /** Tick the active player's clock and render it; end local games on a flag fall. */
+  private updateClock(delta: number): void {
+    const running = this.clockRunningColor();
+    const flagged = this.chessClock.tick(running, delta * 1000);
+    // Online flag falls are the server's call (it broadcasts a 'timeout' state);
+    // local CPU/free games are decided right here.
+    if (flagged && this.mode !== 'online' && !this.timeoutWinner) {
+      this.timeoutWinner = oppositeColor(flagged);
+      this.gameOver = true;
+      this.updateHud();
+      this.updateHint();
+    }
+    this.updateClockHud(running);
+  }
+
+  private updateClockHud(running: PieceColor | null): void {
+    if (!this.clocksEl) return;
+    const show = this.chessClock.enabled && this.inGame && !this.warmupActive;
+    this.clocksEl.classList.toggle('hidden', !show);
+    if (!show) return;
+
+    const render = (el: HTMLElement | null, color: PieceColor): void => {
+      if (!el) return;
+      const time = el.querySelector('.clock-time');
+      if (time) time.textContent = this.chessClock.format(color);
+      el.classList.toggle('active', running === color);
+      el.classList.toggle('low', this.chessClock.remainingMs(color) < 20_000);
+    };
+    render(this.clockWhiteEl, 'white');
+    render(this.clockBlackEl, 'black');
   }
 
   private updateBadge(): void {
@@ -1790,6 +1869,7 @@ export class Game {
       ?.addEventListener('click', () => begin('cpu', 'black'));
 
     this.setupDifficultyPicker();
+    this.setupTimeControlPicker();
 
     document
       .getElementById('mode-online')
@@ -1877,6 +1957,19 @@ export class Game {
     }
   }
 
+  /** Menu segmented control selecting the per-player clock time. */
+  private setupTimeControlPicker(): void {
+    const picker = document.getElementById('time-control');
+    if (!picker) return;
+    const buttons = Array.from(picker.querySelectorAll<HTMLButtonElement>('button[data-seconds]'));
+    for (const button of buttons) {
+      button.addEventListener('click', () => {
+        this.timeControlSeconds = Math.max(0, Number(button.dataset.seconds) || 0);
+        for (const other of buttons) other.classList.toggle('active', other === button);
+      });
+    }
+  }
+
   /** Show the menu's "resume online game" button when a seat is stored. */
   private offerResume(): void {
     const stored = getStoredOnlineSession();
@@ -1926,7 +2019,9 @@ export class Game {
 
     let session: OnlineSession;
     try {
-      session = joinCode ? await joinOnlineGame(joinCode) : await createOnlineGame();
+      session = joinCode
+        ? await joinOnlineGame(joinCode)
+        : await createOnlineGame(this.timeControlSeconds);
     } catch (error) {
       if (resumeInGame) markOnlineInGame(false);
       if (status) {

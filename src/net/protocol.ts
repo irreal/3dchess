@@ -12,7 +12,8 @@ export type OnlineGameStatus =
   | 'checkmate'
   | 'stalemate'
   | 'draw'
-  | 'resigned';
+  | 'resigned'
+  | 'timeout';
 
 export type PromotionSymbol = 'q' | 'r' | 'b' | 'n';
 
@@ -84,6 +85,11 @@ export interface GameSnapshot {
    * Optional so a client can still talk to a server predating the warm-up.
    */
   ready?: { white: boolean; black: boolean };
+  /** Per-player base time in seconds set by the host (0 = no clock). Optional
+   * so a client still works against a server predating the clock feature. */
+  timeControl?: number;
+  /** Remaining milliseconds per player, current as of this snapshot. */
+  clock?: { white: number; black: number };
 }
 
 export type ClientMessage =
