@@ -13,6 +13,7 @@
   "license": "ISC",
   "dependencies": {
     "chess.js": "^1.4.0",
+    "js-chess-engine": "^2.4.6",
     "three": "^0.184.0"
   },
   "devDependencies": {

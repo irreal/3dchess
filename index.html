@@ -116,6 +116,57 @@
         color: #b6c4cf;
       }
 
+      .difficulty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .difficulty-label {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #9fb2c0;
+      }
+
+      .difficulty-options {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .difficulty-options button {
+        padding: 8px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+
+      .difficulty-options button:hover {
+        background: rgba(255, 255, 255, 0.18);
+        border-color: rgba(255, 255, 255, 0.55);
+      }
+
+      .difficulty-options button.active {
+        background: rgba(85, 255, 153, 0.2);
+        border-color: rgba(85, 255, 153, 0.6);
+      }
+
+      #cpu-difficulty.hidden {
+        display: none;
+      }
+
       #menu .modes.hidden,
       #online-panel.hidden,
       #invite-row.hidden,
@@ -905,6 +956,16 @@
         <button id="mode-cpu-white">Play as White<small>CPU plays Black</small></button>
         <button id="mode-cpu-black">Play as Black<small>CPU plays White</small></button>
         <button id="mode-online">Play Online<small>invite a friend</small></button>
+      </div>
+      <div id="cpu-difficulty" class="difficulty">
+        <span class="difficulty-label">CPU difficulty</span>
+        <div class="difficulty-options">
+          <button data-level="1" type="button">Beginner</button>
+          <button data-level="2" type="button">Easy</button>
+          <button data-level="3" type="button" class="active">Intermediate</button>
+          <button data-level="4" type="button">Advanced</button>
+          <button data-level="5" type="button">Expert</button>
+        </div>
       </div>
       <button id="resume-online" class="hidden">Resume online game</button>
       <div id="online-panel" class="hidden">

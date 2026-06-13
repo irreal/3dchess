@@ -1,5 +1,7 @@
 import * as THREE from 'three';
+import type { AILevel } from 'js-chess-engine';
 import { ChessEngine } from './chess/ChessEngine';
+import type { AiRequest, AiResponse } from './chess/aiWorker';
 import {
   oppositeColor,
   sameSquare,
@@ -34,6 +36,8 @@ import {
   type PresencePayload,
   type ServerMessage,
 } from './net/protocol';
+import { Audience } from './world/Audience';
+import { BackgroundMusic } from './world/BackgroundMusic';
 import { Chessboard } from './world/Chessboard';
 import { ChessSet } from './world/ChessSet';
 import { LastMoveArrow } from './world/LastMoveArrow';
@@ -152,6 +156,8 @@ export class Game {
 
   private readonly chessboard: Chessboard;
   private readonly chessSet: ChessSet;
+  private readonly audience = new Audience();
+  private readonly music = new BackgroundMusic();
   private readonly squareIndicator: SquareIndicator;
   private readonly moveHighlights: MoveHighlights;
   private readonly raycaster = new THREE.Raycaster();
@@ -164,6 +170,13 @@ export class Game {
   private mode: GameMode = 'free';
   private playerColor: PieceColor = 'white';
   private enemyMoveTimer: number | null = null;
+
+  /** CPU difficulty (js-chess-engine AI level 1-5), chosen from the menu. */
+  private cpuLevel: AILevel = 3;
+  /** Worker running the chess AI off the main thread; created on first use. */
+  private aiWorker: Worker | null = null;
+  /** Monotonic id so stale worker replies (from a prior position) are ignored. */
+  private aiRequestId = 0;
 
   /** True once the player has left the menu and entered the 3D game. */
   private inGame = false;
@@ -294,6 +307,8 @@ export class Game {
 
     this.chessSet = new ChessSet();
     this.scene.add(this.chessSet.object);
+
+    this.scene.add(this.audience.object);
 
     this.squareIndicator = new SquareIndicator();
     this.scene.add(this.squareIndicator.object);
@@ -466,6 +481,7 @@ export class Game {
     // snapping doesn't stomp their jump height.
     this.remoteAntics.update(delta);
     this.updateFaceScreen(delta);
+    this.audience.update(delta);
     this.maybeSendPresence();
     this.syncPossessed();
     this.syncEnemyMarker();
@@ -717,13 +733,76 @@ export class Game {
     }, CPU_MOVE_DELAY_MS);
   }
 
-  /** Placeholder "AI": plays a uniformly random legal move. */
+  /**
+   * Ask the chess AI (js-chess-engine, in a worker) for the CPU's move at the
+   * current difficulty, then play it. Falls back to a random legal move if the
+   * worker is unavailable or errors.
+   */
   private playCpuMove(): void {
     if (this.gameOver || this.engine.turn !== this.cpuColor) return;
 
+    const worker = this.ensureAiWorker();
+    if (!worker) {
+      this.playFallbackCpuMove();
+      return;
+    }
+
+    const id = ++this.aiRequestId;
+    const onMessage = (event: MessageEvent<AiResponse>): void => {
+      const data = event.data;
+      if (data.id !== id) return; // a newer request superseded this one
+      worker.removeEventListener('message', onMessage);
+
+      // The position may have moved on while the AI searched (game ended,
+      // player left CPU mode, etc.) — only play if it is still the CPU's turn.
+      if (this.gameOver || this.engine.turn !== this.cpuColor) return;
+
+      const move =
+        'from' in data ? this.findLegalMove(data.from, data.to) : null;
+      if (move) {
+        this.animateEnemyMove(move);
+      } else {
+        this.playFallbackCpuMove();
+      }
+    };
+
+    worker.addEventListener('message', onMessage);
+    worker.postMessage({ id, fen: this.engine.fen(), level: this.cpuLevel } satisfies AiRequest);
+  }
+
+  /** Last-resort opponent move when the AI worker can't deliver one. */
+  private playFallbackCpuMove(): void {
+    if (this.gameOver || this.engine.turn !== this.cpuColor) return;
     const moves = this.engine.allLegalMoves();
     if (moves.length === 0) return;
     this.animateEnemyMove(moves[Math.floor(Math.random() * moves.length)]);
+  }
+
+  /** Build (once) the worker that runs the chess AI, or null if unsupported. */
+  private ensureAiWorker(): Worker | null {
+    if (this.aiWorker) return this.aiWorker;
+    try {
+      this.aiWorker = new Worker(new URL('./chess/aiWorker.ts', import.meta.url), {
+        type: 'module',
+      });
+    } catch (error) {
+      console.warn('[ai] worker unavailable; using random fallback', error);
+      this.aiWorker = null;
+    }
+    return this.aiWorker;
+  }
+
+  /** Match an engine move (from/to squares, any case) against legal moves. */
+  private findLegalMove(from: string, to: string): Move | null {
+    const fromCoord = from.toLowerCase();
+    const toCoord = to.toLowerCase();
+    return (
+      this.engine.allLegalMoves().find(
+        (m) =>
+          squareCoord(m.from.file, m.from.rank) === fromCoord &&
+          squareCoord(m.to.file, m.to.rank) === toCoord,
+      ) ?? null
+    );
   }
 
   /**
@@ -1161,6 +1240,7 @@ export class Game {
             .play()
             .catch((error) => console.warn('[rtc] audio autoplay blocked; click unblocks', error));
         }
+        this.updateMusicDucking();
       };
     }
     return this.videoCall;
@@ -1172,6 +1252,14 @@ export class Game {
       false;
     const cameraOn = this.remoteCameraOn ?? hasLiveVideo;
     this.faceScreen.setCameraEnabled(cameraOn);
+  }
+
+  /** Duck the background music whenever a voice call is live (mic on or hearing the friend). */
+  private updateMusicDucking(): void {
+    const hearingFriend =
+      this.remoteMediaStream?.getAudioTracks().some((t) => t.readyState === 'live' && !t.muted) ??
+      false;
+    this.music.setDucked(this.localMicStream !== null || hearingFriend);
   }
 
   private async toggleCamera(): Promise<void> {
@@ -1207,6 +1295,7 @@ export class Game {
       this.localMicStream = null;
       this.syncOutgoingTracks();
       this.updateMediaUi();
+      this.updateMusicDucking();
       return;
     }
 
@@ -1218,6 +1307,7 @@ export class Game {
     this.localMicStream = stream;
     this.syncOutgoingTracks();
     this.updateMediaUi();
+    this.updateMusicDucking();
   }
 
   private async requestMedia(
@@ -1267,6 +1357,7 @@ export class Game {
     this.faceScreen.setStream(null);
     this.faceScreen.setCameraEnabled(false);
     this.remoteAudio.srcObject = null;
+    this.updateMusicDucking();
 
     // With local media on, recreating the call kicks off a fresh negotiation;
     // otherwise it re-arms lazily when the friend's next signal arrives.
@@ -1698,6 +1789,8 @@ export class Game {
       .getElementById('mode-cpu-black')
       ?.addEventListener('click', () => begin('cpu', 'black'));
 
+    this.setupDifficultyPicker();
+
     document
       .getElementById('mode-online')
       ?.addEventListener('click', () => void this.openOnlineLobby(null));
@@ -1766,6 +1859,21 @@ export class Game {
     } else {
       markOnlineInGame(false);
       this.offerResume();
+    }
+  }
+
+  /** Menu segmented control selecting the CPU difficulty (AI level 1-5). */
+  private setupDifficultyPicker(): void {
+    const picker = document.getElementById('cpu-difficulty');
+    if (!picker) return;
+    const buttons = Array.from(picker.querySelectorAll<HTMLButtonElement>('button[data-level]'));
+    for (const button of buttons) {
+      button.addEventListener('click', () => {
+        const level = Number(button.dataset.level);
+        if (level < 1 || level > 5) return;
+        this.cpuLevel = level as AILevel;
+        for (const other of buttons) other.classList.toggle('active', other === button);
+      });
     }
   }
 
