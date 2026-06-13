@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <title>3D Chess</title>
+    <title>TunnelChess</title>
     <style>
       * {
         margin: 0;
@@ -55,7 +55,7 @@
       }
 
       #menu {
-        background: rgba(0, 0, 0, 0.7);
+        background: rgba(6, 10, 14, 0.9);
         gap: 18px;
       }
 
@@ -72,8 +72,68 @@
 
       #overlay p,
       #menu p {
-        color: #bbb;
+        color: #dde6ed;
         text-align: center;
+      }
+
+      /* Callout advertising online play; sits above the mode buttons and
+         points down to the outlined "Play Online" button. */
+      #menu .online-pitch {
+        position: relative;
+        max-width: min(86vw, 440px);
+        margin-top: 4px;
+        padding: 11px 18px;
+        border: 1px solid rgba(85, 255, 153, 0.45);
+        border-radius: 14px;
+        background: rgba(85, 255, 153, 0.1);
+        color: #e7fff3;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      #menu .online-pitch strong {
+        color: #7dffb0;
+        font-family: 'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', cursive;
+        font-size: 16px;
+      }
+
+      /* Mobile-only bits: shown via the mobile media query below. */
+      #menu .mobile-warning {
+        display: none;
+        max-width: min(86vw, 440px);
+        padding: 9px 16px;
+        border: 1px solid rgba(255, 196, 84, 0.5);
+        border-radius: 12px;
+        background: rgba(255, 196, 84, 0.12);
+        color: #ffe2ab;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      #menu .online-pitch-arrow-mobile {
+        display: none;
+        width: 56px;
+        height: 64px;
+        align-self: flex-end;
+        margin: -6px 22% -2px 0;
+        transform: rotate(-8deg);
+        overflow: visible;
+        pointer-events: none;
+        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
+      }
+
+      /* Hand-drawn arrow swooping from the callout down to the outlined
+         "Play Online" button on the right of the row. */
+      #menu .online-pitch .online-pitch-arrow {
+        position: absolute;
+        right: -58px;
+        bottom: -40px;
+        width: 96px;
+        height: 70px;
+        transform: rotate(8deg);
+        overflow: visible;
+        pointer-events: none;
+        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
       }
 
       #menu .modes {
@@ -113,7 +173,23 @@
       #menu .modes button small {
         font-size: 13px;
         font-weight: 400;
-        color: #b6c4cf;
+        color: #cfdae3;
+      }
+
+      /* Outlined accent button — the advertised online mode stands apart. */
+      #menu .modes button#mode-online {
+        background: transparent;
+        border: 2px solid rgba(85, 255, 153, 0.7);
+        color: #c9ffe2;
+      }
+
+      #menu .modes button#mode-online small {
+        color: #8fe9b8;
+      }
+
+      #menu .modes button#mode-online:hover {
+        background: rgba(85, 255, 153, 0.16);
+        border-color: rgba(85, 255, 153, 0.95);
       }
 
       .difficulty {
@@ -128,7 +204,7 @@
         font-weight: 600;
         letter-spacing: 0.14em;
         text-transform: uppercase;
-        color: #9fb2c0;
+        color: #c2cfd9;
       }
 
       .difficulty-options {
@@ -758,6 +834,21 @@
           margin: 4px 0;
         }
 
+        /* On mobile the buttons reflow to a 2x2 grid, so the callout's swoop
+           can't aim at the bottom-right tile — hide it and use an up-pointing
+           arrow placed below the grid instead. */
+        #menu .online-pitch .online-pitch-arrow {
+          display: none;
+        }
+
+        #menu .online-pitch-arrow-mobile {
+          display: block;
+        }
+
+        #menu .mobile-warning {
+          display: block;
+        }
+
         #menu .modes button {
           min-width: 0;
           flex: 1 1 calc(50% - 6px);
@@ -949,14 +1040,41 @@
       <span class="arrow">&#x25B6;</span>
     </div>
     <div id="menu">
-      <h1>3D Chess</h1>
-      <p>You play from inside your pieces — the game starts in your king.</p>
+      <h1>TunnelChess</h1>
+      <p>Chess with tunnel vision — you play from inside your pieces.</p>
+      <p class="mobile-warning">
+        <span aria-hidden="true">&#x26A0;&#xFE0F;</span> Best played on a computer with a mouse &amp;
+        keyboard.
+      </p>
+      <p class="online-pitch">
+        <strong>Play Online</strong> with full video &amp; voice chat — hang out face-to-face with a
+        friend while you play.
+        <svg class="online-pitch-arrow" viewBox="0 0 110 80" fill="none" aria-hidden="true">
+          <path
+            d="M6 10 C 46 0, 92 12, 96 60"
+            stroke="#7dffb0"
+            stroke-width="5"
+            stroke-linecap="round"
+          />
+          <path
+            d="M96 60 L 78 50 M96 60 L 102 40"
+            stroke="#7dffb0"
+            stroke-width="5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </p>
       <div class="modes">
         <button id="mode-free">Free Play<small>control both sides</small></button>
         <button id="mode-cpu-white">Play as White<small>CPU plays Black</small></button>
         <button id="mode-cpu-black">Play as Black<small>CPU plays White</small></button>
         <button id="mode-online">Play Online<small>invite a friend</small></button>
       </div>
+      <svg class="online-pitch-arrow-mobile" viewBox="0 0 80 90" fill="none" aria-hidden="true">
+        <path d="M40 84 C 20 60, 60 42, 42 10" stroke="#7dffb0" stroke-width="5" stroke-linecap="round" />
+        <path d="M42 10 L 30 24 M42 10 L 55 22" stroke="#7dffb0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
       <div id="cpu-difficulty" class="difficulty">
         <span class="difficulty-label">CPU difficulty</span>
         <div class="difficulty-options">
@@ -982,21 +1100,14 @@
         <button id="online-back">Back to menu</button>
       </div>
       <p class="controls-help">
-        Mouse — look &nbsp;·&nbsp; Click a friendly piece — jump into it<br />
-        WASD — walk along a legal path &nbsp;·&nbsp; Rest on a square or press Enter — confirm the
-        move<br />
-        Click a highlighted square — walk there and move<br />
-        Right-click — retreat to your square &nbsp;·&nbsp; Esc — release cursor<br />
-        Space — jump &nbsp;·&nbsp; Ctrl — duck (just for fun; your friend sees it live)<br />
-        Camera / Mic buttons (top-right) — toggle video and voice during online play<br />
-        V / M — same toggles from the keyboard
+        Mouse — look &nbsp;·&nbsp; Click a piece — jump in<br />
+        WASD — walk &nbsp;·&nbsp; Enter or rest on a square — move<br />
+        Esc — release cursor &nbsp;·&nbsp; Space / Ctrl — jump / duck<br />
+        V / M — camera / mic
       </p>
       <p class="controls-help-mobile">
-        Left joystick — walk &nbsp;·&nbsp; Right joystick — look<br />
-        Aim at a piece or square — the action button jumps you in or makes the move<br />
-        Rest on a destination square — also confirms the move<br />
-        Jump / Duck — just for fun; your friend sees it live in online play<br />
-        Camera / Mic buttons (top-left) — toggle video and voice in online play
+        Left stick — walk &nbsp;·&nbsp; Right stick — look<br />
+        Action button — jump in or move &nbsp;·&nbsp; Camera / Mic — top-left
       </p>
     </div>
     <div id="touch-controls" class="hidden">
